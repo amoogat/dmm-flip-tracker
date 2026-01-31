@@ -668,37 +668,11 @@ positions = load_positions()
 price_alerts = load_alerts()
 
 # === VIEW SELECTOR ===
-# Tab-style menu bar with subtle styling
-st.markdown("""
-<style>
-div.row-widget.stButton > button {
-    width: 100%;
-    border-radius: 4px 4px 0 0;
-    border: none;
-    border-bottom: 2px solid #444;
-    background: transparent;
-    color: #888;
-    font-weight: 500;
-}
-div.row-widget.stButton > button:hover {
-    background: rgba(100,100,100,0.1);
-    color: #fff;
-}
-div.row-widget.stButton > button:focus {
-    background: rgba(100,100,100,0.2);
-    color: #fff;
-    border-bottom: 2px solid #4CAF50;
-}
-</style>
-""", unsafe_allow_html=True)
-
-tab1, tab2 = st.columns(2)
-with tab1:
-    if st.button("📊 Dashboard", key="tab_dash"):
-        st.session_state['view'] = 'dashboard'
-with tab2:
-    if st.button("📋 Smart Planner", key="tab_plan"):
-        st.session_state['view'] = 'planner'
+view_choice = st.radio("View", ["📊 Dashboard", "📋 Smart Planner"], index=0 if st.session_state.get('view', 'dashboard') == 'dashboard' else 1, key="view_radio")
+if view_choice == "📋 Smart Planner":
+    st.session_state['view'] = 'planner'
+else:
+    st.session_state['view'] = 'dashboard'
 
 # Get current view from session state
 if 'view' not in st.session_state:

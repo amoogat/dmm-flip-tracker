@@ -37,6 +37,9 @@ def format_age(seconds):
 API_BASE = "https://prices.runescape.wiki/api/v1/dmm"
 HEADERS = {"User-Agent": "DMM-Flip-Tracker/2026"}
 HISTORY_FILE = "price_history.json"  # Shared - everyone benefits
+ALERTS_FILE = "price_alerts.json"  # Persistent alerts
+POSITIONS_FILE = "ge_positions.json"  # Persistent GE offers
+SETTINGS_FILE = "user_settings.json"  # Persistent settings (capital, nickname, etc.)
 USER_DATA_DIR = "user_data"  # Per-user data stored here
 
 st.set_page_config(page_title="DMM Flip Tracker", page_icon="💰", layout="wide")
@@ -542,20 +545,107 @@ def auto_save():
     if nickname:
         save_user_data(nickname)
 
-# === DATA FUNCTIONS (use session state + auto-save) ===
+# === DATA FUNCTIONS (persistent files + session state) ===
 def load_positions():
+    """Load GE positions from persistent file"""
+    if 'positions' not in st.session_state:
+        if os.path.exists(POSITIONS_FILE):
+            try:
+                with open(POSITIONS_FILE, 'r') as f:
+                    st.session_state['positions'] = json.load(f)
+            except:
+                st.session_state['positions'] = []
+        else:
+            st.session_state['positions'] = []
     return st.session_state.get('positions', [])
 
 def save_positions(positions):
+    """Save GE positions to persistent file"""
     st.session_state['positions'] = positions
+    try:
+        with open(POSITIONS_FILE, 'w') as f:
+            json.dump(positions, f, indent=2)
+    except:
+        pass
     auto_save()
 
 def load_alerts():
+    """Load alerts from persistent file"""
+    if 'alerts' not in st.session_state:
+        # Load from file on first access
+        if os.path.exists(ALERTS_FILE):
+            try:
+                with open(ALERTS_FILE, 'r') as f:
+                    st.session_state['alerts'] = json.load(f)
+            except:
+                st.session_state['alerts'] = []
+        else:
+            st.session_state['alerts'] = []
     return st.session_state.get('alerts', [])
 
 def save_alerts(alerts):
+    """Save alerts to persistent file"""
     st.session_state['alerts'] = alerts
+    try:
+        with open(ALERTS_FILE, 'w') as f:
+            json.dump(alerts, f, indent=2)
+    except:
+        pass
     auto_save()
+
+def load_settings():
+    """Load user settings (capital, nickname, etc.) from persistent file"""
+    if 'settings_loaded' not in st.session_state:
+        st.session_state['settings_loaded'] = True
+        if os.path.exists(SETTINGS_FILE):
+            try:
+                with open(SETTINGS_FILE, 'r') as f:
+                    settings = json.load(f)
+                    st.session_state['capital'] = settings.get('capital', 50000)
+                    st.session_state['nickname'] = settings.get('nickname', '')
+                    st.session_state['min_margin'] = settings.get('min_margin', 3)
+                    st.session_state['max_margin'] = settings.get('max_margin', 30)
+                    st.session_state['filter_stale'] = settings.get('filter_stale', True)
+                    st.session_state['filter_low_vol'] = settings.get('filter_low_vol', True)
+            except:
+                pass
+    return {
+        'capital': st.session_state.get('capital', 50000),
+        'nickname': st.session_state.get('nickname', ''),
+        'min_margin': st.session_state.get('min_margin', 3),
+        'max_margin': st.session_state.get('max_margin', 30),
+        'filter_stale': st.session_state.get('filter_stale', True),
+        'filter_low_vol': st.session_state.get('filter_low_vol', True)
+    }
+
+def save_settings(capital=None, nickname=None, min_margin=None, max_margin=None, filter_stale=None, filter_low_vol=None):
+    """Save user settings to persistent file"""
+    if capital is not None:
+        st.session_state['capital'] = capital
+    if nickname is not None:
+        st.session_state['nickname'] = nickname
+    if min_margin is not None:
+        st.session_state['min_margin'] = min_margin
+    if max_margin is not None:
+        st.session_state['max_margin'] = max_margin
+    if filter_stale is not None:
+        st.session_state['filter_stale'] = filter_stale
+    if filter_low_vol is not None:
+        st.session_state['filter_low_vol'] = filter_low_vol
+
+    settings = {
+        'capital': st.session_state.get('capital', 50000),
+        'nickname': st.session_state.get('nickname', ''),
+        'min_margin': st.session_state.get('min_margin', 3),
+        'max_margin': st.session_state.get('max_margin', 30),
+        'filter_stale': st.session_state.get('filter_stale', True),
+        'filter_low_vol': st.session_state.get('filter_low_vol', True)
+    }
+    try:
+        with open(SETTINGS_FILE, 'w') as f:
+            json.dump(settings, f, indent=2)
+    except:
+        pass
 
 def load_plans():
     return st.session_state.get('plans', {'items': [], 'start_time': None, 'start_capital': 0})
@@ -939,6 +1029,9 @@ except Exception as e:
     data_ok = False
     items, item_names, prices, volumes, history = {}, {}, {}, {}, {}
 
+# === LOAD PERSISTENT SETTINGS ===
+saved_settings = load_settings()
+
 # === SIDEBAR ===
 st.sidebar.title("💰 DMM Tracker")
 st.sidebar.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
@@ -950,36 +1043,38 @@ if st.sidebar.button("🔄 Refresh"):
 # === USER NICKNAME (for saving/loading data) ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("👤 Your Profile")
-nickname_input = st.sidebar.text_input("Nickname", value=st.session_state.get('nickname', ''))
+nickname_input = st.sidebar.text_input("Nickname", value=saved_settings['nickname'])
 
-if st.sidebar.button("🚀 Start / Load"):
-    if nickname_input:
-        # Try to load existing data, or start fresh
-        if load_user_data(nickname_input):
-            st.session_state['nickname'] = nickname_input
-            st.sidebar.success(f"Welcome back, {nickname_input}!")
-        else:
-            st.session_state['nickname'] = nickname_input
-            st.sidebar.success(f"New profile: {nickname_input}")
-        rerun()
-    else:
-        st.sidebar.warning("Enter a nickname first")
+if nickname_input != saved_settings['nickname']:
+    save_settings(nickname=nickname_input)
 
-if st.session_state.get('nickname'):
-    st.sidebar.success(f"👤 **{st.session_state['nickname']}** (auto-saving)")
-else:
-    st.sidebar.caption("Enter nickname to save your data")
+if saved_settings['nickname']:
+    st.sidebar.success(f"👤 **{saved_settings['nickname']}** (auto-saving)")
 
 st.sidebar.markdown("---")
-capital = st.sidebar.number_input("💵 Your Capital (GP)", value=50000, min_value=1000, step=10000)
-min_margin = st.sidebar.slider("Min Margin %", 1, 20, 3)
-max_margin = st.sidebar.slider("Max Margin %", 10, 50, 30)
+capital = st.sidebar.number_input("💵 Your Capital (GP)", value=saved_settings['capital'], min_value=1000, step=10000)
+if capital != saved_settings['capital']:
+    save_settings(capital=capital)
+
+min_margin = st.sidebar.slider("Min Margin %", 1, 20, saved_settings['min_margin'])
+if min_margin != saved_settings['min_margin']:
+    save_settings(min_margin=min_margin)
+
+max_margin = st.sidebar.slider("Max Margin %", 10, 50, saved_settings['max_margin'])
+if max_margin != saved_settings['max_margin']:
+    save_settings(max_margin=max_margin)
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔧 Filters")
-filter_stale = st.sidebar.checkbox("Filter stale prices (>10 min)", value=True)
-filter_low_vol = st.sidebar.checkbox("Filter low volume (<5/hr)", value=True)
-st.sidebar.caption("Uncheck to see all items (may include dead ones)")
+filter_stale = st.sidebar.checkbox("Filter stale prices (>10 min)", value=saved_settings['filter_stale'])
+if filter_stale != saved_settings['filter_stale']:
+    save_settings(filter_stale=filter_stale)
+
+filter_low_vol = st.sidebar.checkbox("Filter low volume (<5/hr)", value=saved_settings['filter_low_vol'])
+if filter_low_vol != saved_settings['filter_low_vol']:
+    save_settings(filter_low_vol=filter_low_vol)
+
+st.sidebar.caption("Settings auto-save and persist across refreshes!")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔄 Auto-Refresh")
@@ -1197,6 +1292,59 @@ if triggered_alerts:
     st.error("### 🔔 PRICE ALERTS TRIGGERED!")
     for ta in triggered_alerts:
         st.warning(f"🔔 **{ta['item']}**: {ta['type']} {ta['target']:,} (Current: {ta['current']:,})")
+
+# === QUICK PRICE ALERT (Top of page) ===
+with st.expander("🔔 Quick Price Alert", expanded=False):
+    alert_cols = st.columns([3, 2, 2, 1])
+
+    with alert_cols[0]:
+        main_alert_search = st.text_input("Search item", key="main_alert_search", placeholder="Type item name...")
+
+    main_alert_item = None
+    if main_alert_search and data_ok:
+        main_alert_matching = [n for n in item_names.keys() if main_alert_search.lower() in n][:8]
+        if main_alert_matching:
+            with alert_cols[0]:
+                main_alert_item = st.selectbox("Select", main_alert_matching, key="main_alert_select", )
+
+    if main_alert_item:
+        main_alert_item_id = item_names[main_alert_item]
+        main_ap = prices.get(str(main_alert_item_id), {})
+        main_curr_high = main_ap.get('high', 0)
+        main_curr_low = main_ap.get('low', 0)
+
+        with alert_cols[1]:
+            st.caption(f"High: {main_curr_high:,} | Low: {main_curr_low:,}")
+            main_alert_type = st.selectbox("When...", ["High ≥", "High ≤", "Low ≥", "Low ≤"], key="main_alert_type", )
+
+        with alert_cols[2]:
+            main_default = max(1, main_curr_high if "High" in main_alert_type else main_curr_low)
+            main_alert_price = st.number_input("Price", value=main_default, min_value=1, key="main_alert_price", )
+
+        with alert_cols[3]:
+            st.write("")  # Spacing
+            if st.button("➕ Add", key="main_add_alert"):
+                alerts_list = load_alerts()
+                new_alert = {
+                    'item': items[main_alert_item_id]['name'],
+                    'item_id': main_alert_item_id,
+                    'enabled': True
+                }
+                if main_alert_type == "High ≥":
+                    new_alert['high_above'] = int(main_alert_price)
+                elif main_alert_type == "High ≤":
+                    new_alert['high_below'] = int(main_alert_price)
+                elif main_alert_type == "Low ≥":
+                    new_alert['low_above'] = int(main_alert_price)
+                elif main_alert_type == "Low ≤":
+                    new_alert['low_below'] = int(main_alert_price)
+
+                alerts_list.append(new_alert)
+                save_alerts(alerts_list)
+                st.success(f"✅ Alert added for {main_alert_item}!")
+                rerun()
+
+st.markdown("---")
 
 # ============================================
 # SMART PLANNER VIEW
@@ -1688,54 +1836,10 @@ else:
         st.caption("🔔 = Enable | 🔇 = Disable | ❌ = Delete")
         st.markdown("---")
 
-    # === SECTION: STABLE PICKS ===
-    st.subheader("⭐ Stable Picks (Proven Margins)")
-    if stable:
-        st.caption(f"Items with consistent margins over time. Tracking {len(history)} items. Click column headers to sort!")
-
-        stable_data = []
-        for s in stable:
-            # Freshness indicator
-            age = s.get('age', 9999)
-            if age < 60:
-                freshness = "🟢"
-            elif age < 180:
-                freshness = "🟡"
-            elif age < 600:
-                freshness = "🟠"
-            else:
-                freshness = "🔴"
-
-            stable_data.append({
-                'Item': s['name'],
-                'Buy': s['buy'],
-                'Sell': s['sell'],
-                'Margin %': round(s['margin_pct'], 1),
-                'Vol/hr': s.get('volume', 0),
-                'Age': format_age(age),
-                'Fresh': freshness,
-                'Stab': s.get('score', 0),
-                'Price': s.get('price_trend', '—'),
-                'Margin': s.get('margin_trend', '—'),
-                '🔥Agg': s.get('smart_agg', 0),
-                '⚖️Bal': s.get('smart_bal', 0),
-                '🛡️Con': s.get('smart_con', 0),
-                'Profit': s['profit'],
-                'Limit': items.get(s.get('item_id'), {}).get('limit', 0)
-            })
-        df = pd.DataFrame(stable_data)
-        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
-        st.dataframe(styled_df)
-        st.caption("Stab=Stability Score | Price/Margin=Trends | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
-    else:
-        st.info(f"Building data... tracking {len(history)} items. Keep page open!")
-
-    st.markdown("---")
-
-    # === SECTION: TOP OPPORTUNITIES ===
+    # === SECTION: TOP OPPORTUNITIES (First!) ===
     st.subheader("🔥 Top Opportunities")
     if opps:
-        st.caption("Sorted by 🔥Aggressive. Click column headers to re-sort!")
+        st.caption("Live prices • Sorted by 🔥Aggressive • Click column headers to re-sort!")
 
         opp_data = []
         for opp in opps:
@@ -1777,6 +1881,50 @@ else:
         st.caption("Stab=Stability | Trend=Price direction | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
     else:
         st.info("No opportunities with current filters")
+
+    st.markdown("---")
+
+    # === SECTION: STABLE PICKS ===
+    st.subheader("⭐ Stable Picks (Proven Margins)")
+    if stable:
+        st.caption(f"Items with consistent margins over time. Tracking {len(history)} items. Click column headers to sort!")
+
+        stable_data = []
+        for s in stable:
+            # Freshness indicator
+            age = s.get('age', 9999)
+            if age < 60:
+                freshness = "🟢"
+            elif age < 180:
+                freshness = "🟡"
+            elif age < 600:
+                freshness = "🟠"
+            else:
+                freshness = "🔴"
+
+            stable_data.append({
+                'Item': s['name'],
+                'Buy': s['buy'],
+                'Sell': s['sell'],
+                'Margin %': round(s['margin_pct'], 1),
+                'Vol/hr': s.get('volume', 0),
+                'Age': format_age(age),
+                'Fresh': freshness,
+                'Stab': s.get('score', 0),
+                'Price': s.get('price_trend', '—'),
+                'Margin': s.get('margin_trend', '—'),
+                '🔥Agg': s.get('smart_agg', 0),
+                '⚖️Bal': s.get('smart_bal', 0),
+                '🛡️Con': s.get('smart_con', 0),
+                'Profit': s['profit'],
+                'Limit': items.get(s.get('item_id'), {}).get('limit', 0)
+            })
+        df = pd.DataFrame(stable_data)
+        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        st.dataframe(styled_df)
+        st.caption("Stab=Stability Score | Price/Margin=Trends | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
+    else:
+        st.info(f"Building data... tracking {len(history)} items. Keep page open!")
 
     st.markdown("---")
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")

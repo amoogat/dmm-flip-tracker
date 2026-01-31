@@ -1,0 +1,2 @@
+# This file ensures the user_data directory exists in git
+# User data files are ignored via .gitignore

@@ -1,0 +1,38 @@
+# User data (per-user saves)
+user_data/*
+!user_data/.gitkeep
+
+# Shared price history (optional - can include for faster startup)
+# price_history.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Old files
+positions.json
+price_alerts.json
+flip_plans.json

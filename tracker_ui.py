@@ -98,9 +98,52 @@ st.markdown("""
         background: linear-gradient(180deg, #12151C 0%, #1A1D24 100%) !important;
         border-right: 1px solid var(--gold-dark);
     }
+    [data-testid="stSidebar"] > div:first-child {
+        background: transparent !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.5rem;
+    }
     [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
         color: var(--gold-light) !important;
         font-size: 1.1rem !important;
+    }
+    [data-testid="stSidebar"] p, [data-testid="stSidebar"] label, [data-testid="stSidebar"] span {
+        color: var(--text-primary) !important;
+    }
+    [data-testid="stSidebarContent"] {
+        background: transparent !important;
+    }
+
+    /* === TAB NAVIGATION === */
+    .tab-container {
+        display: flex;
+        gap: 0;
+        margin-bottom: 20px;
+        border-bottom: 2px solid var(--gold-dark);
+    }
+    .tab-btn {
+        flex: 1;
+        padding: 12px 24px;
+        background: transparent;
+        border: none;
+        border-bottom: 3px solid transparent;
+        color: var(--text-secondary);
+        font-family: 'Cinzel', serif;
+        font-size: 1.1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        margin-bottom: -2px;
+    }
+    .tab-btn:hover {
+        color: var(--gold-light);
+        background: rgba(212, 175, 55, 0.1);
+    }
+    .tab-btn.active {
+        color: var(--gold);
+        border-bottom: 3px solid var(--gold);
+        background: rgba(212, 175, 55, 0.05);
     }
 
     /* === METRICS === */
@@ -969,19 +1012,31 @@ stable = get_stable_picks(items, history, prices, volumes, capital, filter_stale
 positions = load_positions()
 price_alerts = load_alerts()
 
-# === VIEW SELECTOR ===
-view_choice = st.radio("View", ["📊 Dashboard", "📋 Smart Planner"], index=0 if st.session_state.get('view', 'dashboard') == 'dashboard' else 1, key="view_radio")
-if view_choice == "📋 Smart Planner":
-    st.session_state['view'] = 'planner'
-else:
-    st.session_state['view'] = 'dashboard'
-
-# Get current view from session state
+# === VIEW SELECTOR (Tab Style) ===
 if 'view' not in st.session_state:
     st.session_state['view'] = 'dashboard'
-view = "📋 Smart Planner" if st.session_state['view'] == 'planner' else "📊 Dashboard"
 
-st.markdown("---")
+current_view = st.session_state.get('view', 'dashboard')
+
+# Custom CSS for tab buttons based on active state
+dash_style = "background: linear-gradient(180deg, #D4AF37 0%, #B8860B 100%); color: #1A1D24;" if current_view == 'dashboard' else "background: transparent; color: #A0A0A0; border: 1px solid #B8860B;"
+plan_style = "background: linear-gradient(180deg, #D4AF37 0%, #B8860B 100%); color: #1A1D24;" if current_view == 'planner' else "background: transparent; color: #A0A0A0; border: 1px solid #B8860B;"
+
+tab1, tab2 = st.columns(2)
+with tab1:
+    st.markdown(f'<div style="text-align:center;padding:10px;border-radius:8px 8px 0 0;{dash_style}font-family:Cinzel,serif;font-weight:600;border-bottom:{"3px solid #D4AF37" if current_view=="dashboard" else "none"};">📊 Dashboard</div>', unsafe_allow_html=True)
+    if st.button("Select Dashboard", key="tab_dash"):
+        st.session_state['view'] = 'dashboard'
+        rerun()
+with tab2:
+    st.markdown(f'<div style="text-align:center;padding:10px;border-radius:8px 8px 0 0;{plan_style}font-family:Cinzel,serif;font-weight:600;border-bottom:{"3px solid #D4AF37" if current_view=="planner" else "none"};">📋 Smart Planner</div>', unsafe_allow_html=True)
+    if st.button("Select Planner", key="tab_plan"):
+        st.session_state['view'] = 'planner'
+        rerun()
+
+st.markdown('<hr style="margin-top:-10px;margin-bottom:20px;">', unsafe_allow_html=True)
+
+view = st.session_state.get('view', 'dashboard')
 
 # === CHECK PRICE ALERTS (always check, regardless of view) ===
 triggered_alerts = check_alerts(price_alerts, prices, item_names)
@@ -1000,7 +1055,7 @@ if triggered_alerts:
 # ============================================
 # SMART PLANNER VIEW
 # ============================================
-if view == "📋 Smart Planner":
+if view == 'planner':
     st.subheader("📋 Smart Flip Planner")
     st.caption("Auto-generates an optimal flip plan based on your capital, using stable picks and top opportunities.")
 

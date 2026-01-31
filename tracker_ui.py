@@ -1953,13 +1953,17 @@ else:
                     item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
                     price_change = item.get('price_change_pct', 0)
                     price_dir = "+" if price_change >= 0 else ""
+                    # Get current price from prices dict
+                    curr_price_data = prices.get(str(item['item_id']), {})
+                    curr_high = curr_price_data.get('high', 0)
+                    curr_low = curr_price_data.get('low', 0)
+                    curr_price = (curr_high + curr_low) // 2 if curr_high and curr_low else 0
                     scan_data.append({
                         'Item': item_name,
-                        'Normal Price': f"{item.get('other_price', 0):,.0f}",
-                        'Post-Breach Price': f"{item.get('post_price', 0):,.0f}",
+                        'Current': f"{curr_price:,}" if curr_price else "N/A",
+                        'Normal': f"{item.get('other_price', 0):,.0f}",
+                        'Post-Breach': f"{item.get('post_price', 0):,.0f}",
                         'Price Δ': f"{price_dir}{price_change:.1f}%",
-                        'Normal Margin': f"{item['other_margin']:.1f}%",
-                        'Post-Breach Margin': f"{item['post_margin']:.1f}%",
                         'Margin Boost': f"+{item.get('margin_boost', item['boost']):.1f}%"
                     })
 
@@ -1976,15 +1980,14 @@ else:
                         hide_index=True,
                         column_config={
                             'Item': st.column_config.TextColumn('Item', width='medium'),
-                            'Normal Price': st.column_config.TextColumn('Normal Price', width='small'),
-                            'Post-Breach Price': st.column_config.TextColumn('Post-Breach Price', width='small'),
+                            'Current': st.column_config.TextColumn('Current', width='small'),
+                            'Normal': st.column_config.TextColumn('Normal', width='small'),
+                            'Post-Breach': st.column_config.TextColumn('Post-Breach', width='small'),
                             'Price Δ': st.column_config.TextColumn('Price Δ', width='small'),
-                            'Normal Margin': st.column_config.TextColumn('Normal Margin', width='small'),
-                            'Post-Breach Margin': st.column_config.TextColumn('Post-Breach Margin', width='small'),
                             'Margin Boost': st.column_config.TextColumn('Margin Boost', width='small'),
                         }
                     )
-                    st.caption("Based on last 48 hours. Price Δ = price change after breach. Margin Boost = margin increase after breach. Click column headers to sort.")
+                    st.caption("Current = live price now. Normal/Post-Breach = avg prices from last 48hrs. Price Δ = change after breach. Click headers to sort.")
 
         # Show breach items
         breach_opps = scan_breach_items(prices, volumes, items, item_names)
@@ -2068,13 +2071,17 @@ else:
                     item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
                     price_change = item.get('price_change_pct', 0)
                     price_dir = "+" if price_change >= 0 else ""
+                    # Get current price from prices dict
+                    curr_price_data = prices.get(str(item['item_id']), {})
+                    curr_high = curr_price_data.get('high', 0)
+                    curr_low = curr_price_data.get('low', 0)
+                    curr_price = (curr_high + curr_low) // 2 if curr_high and curr_low else 0
                     scan_data.append({
                         'Item': item_name,
-                        'Normal Price': f"{item.get('other_price', 0):,.0f}",
-                        'Post-Breach Price': f"{item.get('post_price', 0):,.0f}",
+                        'Current': f"{curr_price:,}" if curr_price else "N/A",
+                        'Normal': f"{item.get('other_price', 0):,.0f}",
+                        'Post-Breach': f"{item.get('post_price', 0):,.0f}",
                         'Price Δ': f"{price_dir}{price_change:.1f}%",
-                        'Normal Margin': f"{item['other_margin']:.1f}%",
-                        'Post-Breach Margin': f"{item['post_margin']:.1f}%",
                         'Margin Boost': f"+{item.get('margin_boost', item['boost']):.1f}%"
                     })
 
@@ -2091,15 +2098,14 @@ else:
                         hide_index=True,
                         column_config={
                             'Item': st.column_config.TextColumn('Item', width='medium'),
-                            'Normal Price': st.column_config.TextColumn('Normal Price', width='small'),
-                            'Post-Breach Price': st.column_config.TextColumn('Post-Breach Price', width='small'),
+                            'Current': st.column_config.TextColumn('Current', width='small'),
+                            'Normal': st.column_config.TextColumn('Normal', width='small'),
+                            'Post-Breach': st.column_config.TextColumn('Post-Breach', width='small'),
                             'Price Δ': st.column_config.TextColumn('Price Δ', width='small'),
-                            'Normal Margin': st.column_config.TextColumn('Normal Margin', width='small'),
-                            'Post-Breach Margin': st.column_config.TextColumn('Post-Breach Margin', width='small'),
                             'Margin Boost': st.column_config.TextColumn('Margin Boost', width='small'),
                         }
                     )
-                    st.caption("Based on last 48 hours. Price Δ = price change after breach. Margin Boost = margin increase after breach. Click column headers to sort.")
+                    st.caption("Current = live price now. Normal/Post-Breach = avg prices from last 48hrs. Price Δ = change after breach. Click headers to sort.")
 
     st.markdown("---")
 

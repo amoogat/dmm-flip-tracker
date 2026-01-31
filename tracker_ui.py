@@ -41,9 +41,28 @@ USER_DATA_DIR = "user_data"  # Per-user data stored here
 
 st.set_page_config(page_title="DMM Flip Tracker", page_icon="💰", layout="wide")
 
-# Fix scroll issue on Streamlit Cloud
+# === CUSTOM THEME CSS ===
 st.markdown("""
 <style>
+    /* === IMPORTS === */
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700&family=Inter:wght@400;500;600&display=swap');
+
+    /* === ROOT VARIABLES === */
+    :root {
+        --gold: #D4AF37;
+        --gold-light: #F4D03F;
+        --gold-dark: #B8860B;
+        --bg-dark: #0E1117;
+        --bg-card: #1A1D24;
+        --bg-card-hover: #252A34;
+        --text-primary: #FAFAFA;
+        --text-secondary: #A0A0A0;
+        --green: #00D26A;
+        --red: #FF4757;
+        --orange: #FFA502;
+    }
+
+    /* === SCROLL FIX === */
     .main .block-container {
         max-height: none !important;
         overflow: visible !important;
@@ -53,6 +72,215 @@ st.markdown("""
     }
     [data-testid="stAppViewContainer"] {
         overflow-y: auto !important;
+        background: linear-gradient(180deg, #0E1117 0%, #1A1D24 100%);
+    }
+
+    /* === SMOOTH TRANSITIONS === */
+    * {
+        transition: background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+    }
+
+    /* === TYPOGRAPHY === */
+    h1, h2, h3 {
+        font-family: 'Cinzel', serif !important;
+        color: var(--gold) !important;
+        text-shadow: 0 0 20px rgba(212, 175, 55, 0.3);
+    }
+    h1 {
+        font-size: 2.5rem !important;
+        letter-spacing: 2px;
+        border-bottom: 2px solid var(--gold-dark);
+        padding-bottom: 10px;
+    }
+
+    /* === SIDEBAR === */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #12151C 0%, #1A1D24 100%) !important;
+        border-right: 1px solid var(--gold-dark);
+    }
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {
+        color: var(--gold-light) !important;
+        font-size: 1.1rem !important;
+    }
+
+    /* === METRICS === */
+    [data-testid="stMetric"] {
+        background: var(--bg-card);
+        border: 1px solid rgba(212, 175, 55, 0.3);
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    }
+    [data-testid="stMetric"]:hover {
+        border-color: var(--gold);
+        box-shadow: 0 4px 20px rgba(212, 175, 55, 0.2);
+    }
+    [data-testid="stMetricLabel"] {
+        color: var(--text-secondary) !important;
+    }
+    [data-testid="stMetricValue"] {
+        color: var(--gold-light) !important;
+        font-family: 'Cinzel', serif !important;
+    }
+
+    /* === DATAFRAMES === */
+    [data-testid="stDataFrame"] {
+        border: 1px solid rgba(212, 175, 55, 0.2);
+        border-radius: 10px;
+        overflow: hidden;
+    }
+    [data-testid="stDataFrame"] table {
+        font-family: 'Inter', sans-serif !important;
+    }
+    [data-testid="stDataFrame"] th {
+        background: linear-gradient(180deg, #2A2F3A 0%, #1E222A 100%) !important;
+        color: var(--gold) !important;
+        font-weight: 600 !important;
+        border-bottom: 2px solid var(--gold-dark) !important;
+    }
+    [data-testid="stDataFrame"] td {
+        background: var(--bg-card) !important;
+        border-bottom: 1px solid rgba(255,255,255,0.05) !important;
+    }
+    [data-testid="stDataFrame"] tr:hover td {
+        background: var(--bg-card-hover) !important;
+    }
+
+    /* === BUTTONS === */
+    .stButton > button {
+        background: linear-gradient(180deg, var(--gold) 0%, var(--gold-dark) 100%);
+        color: #1A1D24 !important;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        font-family: 'Inter', sans-serif;
+        transition: all 0.3s ease;
+        box-shadow: 0 2px 10px rgba(212, 175, 55, 0.3);
+    }
+    .stButton > button:hover {
+        background: linear-gradient(180deg, var(--gold-light) 0%, var(--gold) 100%);
+        box-shadow: 0 4px 20px rgba(212, 175, 55, 0.5);
+        transform: translateY(-1px);
+    }
+    .stButton > button:active {
+        transform: translateY(0px);
+    }
+
+    /* === INPUTS === */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input,
+    .stSelectbox > div > div > div {
+        background: var(--bg-card) !important;
+        border: 1px solid rgba(212, 175, 55, 0.3) !important;
+        border-radius: 6px !important;
+        color: var(--text-primary) !important;
+    }
+    .stTextInput > div > div > input:focus,
+    .stNumberInput > div > div > input:focus {
+        border-color: var(--gold) !important;
+        box-shadow: 0 0 10px rgba(212, 175, 55, 0.2) !important;
+    }
+
+    /* === CHECKBOXES === */
+    .stCheckbox > label > span {
+        color: var(--text-primary) !important;
+    }
+
+    /* === ALERTS/WARNINGS === */
+    .stAlert {
+        border-radius: 8px;
+        border-left: 4px solid;
+    }
+    [data-baseweb="notification"] {
+        background: var(--bg-card) !important;
+    }
+
+    /* === SUCCESS MESSAGES === */
+    .element-container:has(.stSuccess) {
+        animation: glow-green 2s ease-in-out;
+    }
+    @keyframes glow-green {
+        0%, 100% { box-shadow: none; }
+        50% { box-shadow: 0 0 20px rgba(0, 210, 106, 0.3); }
+    }
+
+    /* === ERROR MESSAGES === */
+    .stError {
+        background: rgba(255, 71, 87, 0.1) !important;
+        border-color: var(--red) !important;
+    }
+
+    /* === WARNING MESSAGES === */
+    .stWarning {
+        background: rgba(255, 165, 2, 0.1) !important;
+        border-color: var(--orange) !important;
+    }
+
+    /* === RADIO BUTTONS === */
+    .stRadio > label {
+        color: var(--text-primary) !important;
+    }
+    .stRadio > div {
+        background: var(--bg-card);
+        border-radius: 8px;
+        padding: 10px;
+        border: 1px solid rgba(212, 175, 55, 0.2);
+    }
+
+    /* === DIVIDERS === */
+    hr {
+        border: none;
+        height: 1px;
+        background: linear-gradient(90deg, transparent, var(--gold-dark), transparent);
+        margin: 20px 0;
+    }
+
+    /* === CAPTIONS === */
+    .stCaption, small {
+        color: var(--text-secondary) !important;
+        font-style: italic;
+    }
+
+    /* === SUBHEADERS === */
+    .stSubheader {
+        color: var(--gold-light) !important;
+        border-left: 3px solid var(--gold);
+        padding-left: 10px;
+    }
+
+    /* === LOADING ANIMATION === */
+    .stSpinner > div {
+        border-top-color: var(--gold) !important;
+    }
+
+    /* === HIDE STREAMLIT BRANDING === */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* === CUSTOM SCROLLBAR === */
+    ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+        background: var(--bg-dark);
+    }
+    ::-webkit-scrollbar-thumb {
+        background: var(--gold-dark);
+        border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--gold);
+    }
+
+    /* === FADE IN ANIMATION === */
+    .main .block-container {
+        animation: fadeIn 0.3s ease-in;
+    }
+    @keyframes fadeIn {
+        from { opacity: 0.7; }
+        to { opacity: 1; }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -719,7 +947,14 @@ if alert_item:
             rerun()
 
 # === MAIN ===
-st.title("DMM 2026 Flip Tracker")
+st.markdown("""
+<h1 style="text-align: center; margin-bottom: 5px;">
+    ⚔️ DMM 2026 Flip Tracker ⚔️
+</h1>
+<p style="text-align: center; color: #A0A0A0; margin-top: 0;">
+    Real-time margins • Smart scoring • Multi-user
+</p>
+""", unsafe_allow_html=True)
 
 if not data_ok:
     st.stop()

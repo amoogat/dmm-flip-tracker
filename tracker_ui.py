@@ -41,6 +41,22 @@ USER_DATA_DIR = "user_data"  # Per-user data stored here
 
 st.set_page_config(page_title="DMM Flip Tracker", page_icon="💰", layout="wide")
 
+# Fix scroll issue on Streamlit Cloud
+st.markdown("""
+<style>
+    .main .block-container {
+        max-height: none !important;
+        overflow: visible !important;
+    }
+    section.main {
+        overflow-y: auto !important;
+    }
+    [data-testid="stAppViewContainer"] {
+        overflow-y: auto !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 # === USER DATA FUNCTIONS ===
 def get_user_dir(nickname):
     """Get or create user data directory"""

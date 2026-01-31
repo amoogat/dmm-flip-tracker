@@ -187,9 +187,11 @@ def fetch_breach_scanner_data():
                 if len(data) < 10:
                     continue
 
-                # Analyze post-breach vs other margins
+                # Analyze post-breach vs other (margins AND prices)
                 post_margins = []
                 other_margins = []
+                post_prices = []
+                other_prices = []
 
                 for point in data:
                     ts = point['timestamp']
@@ -198,6 +200,7 @@ def fetch_breach_scanner_data():
 
                     if high > 0 and low > 0:
                         margin = (high - low) / low * 100
+                        avg_price = (high + low) / 2  # Use average of high/low as "price"
                         dt = datetime.fromtimestamp(ts, tz=timezone.utc)
                         hour = dt.hour
 
@@ -206,25 +209,37 @@ def fetch_breach_scanner_data():
 
                         if is_post:
                             post_margins.append(margin)
+                            post_prices.append(avg_price)
                         else:
                             other_margins.append(margin)
+                            other_prices.append(avg_price)
 
-                if post_margins and other_margins:
-                    avg_post = sum(post_margins) / len(post_margins)
-                    avg_other = sum(other_margins) / len(other_margins)
-                    boost = avg_post - avg_other
+                if post_margins and other_margins and post_prices and other_prices:
+                    avg_post_margin = sum(post_margins) / len(post_margins)
+                    avg_other_margin = sum(other_margins) / len(other_margins)
+                    margin_boost = avg_post_margin - avg_other_margin
 
-                    if boost > 3:  # Only include if significant boost
+                    avg_post_price = sum(post_prices) / len(post_prices)
+                    avg_other_price = sum(other_prices) / len(other_prices)
+                    price_change_pct = ((avg_post_price - avg_other_price) / avg_other_price) * 100 if avg_other_price > 0 else 0
+
+                    # Include if margin boost > 2% OR price change > 2%
+                    if margin_boost > 2 or abs(price_change_pct) > 2:
                         results.append({
                             'item_id': item_id,
-                            'boost': boost,
-                            'post_margin': avg_post,
-                            'other_margin': avg_other
+                            'margin_boost': margin_boost,
+                            'post_margin': avg_post_margin,
+                            'other_margin': avg_other_margin,
+                            'price_change_pct': price_change_pct,
+                            'post_price': avg_post_price,
+                            'other_price': avg_other_price,
+                            # Keep 'boost' for backwards compatibility
+                            'boost': margin_boost
                         })
             except:
                 pass
 
-        return sorted(results, key=lambda x: -x['boost'])[:10]
+        return sorted(results, key=lambda x: -x['margin_boost'])[:10]
     except:
         return []
 
@@ -1927,26 +1942,49 @@ else:
                 <div style="background: #1A1D24; padding: 10px 15px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid #D4AF37;">
                     <strong style="color: #D4AF37;">What this means:</strong><br>
                     <span style="color: #A0A0A0; font-size: 0.9rem;">
-                        After breaches, players restock consumables (food, pots, runes), causing temporary margin spikes.
-                        These items historically show higher margins in the <strong>0-2 hours after breach</strong>.
+                        After breaches, players restock consumables (food, pots, runes), causing price and margin changes.
+                        Data shows behavior in the <strong>0-2 hours after breach</strong> vs normal times.
                     </span>
                 </div>
                 """, unsafe_allow_html=True)
 
                 scan_data = []
-                for item in scanned[:8]:
+                for item in scanned[:10]:
                     item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
+                    price_change = item.get('price_change_pct', 0)
+                    price_dir = "+" if price_change >= 0 else ""
                     scan_data.append({
                         'Item': item_name,
+                        'Normal Price': f"{item.get('other_price', 0):,.0f}",
+                        'Post-Breach Price': f"{item.get('post_price', 0):,.0f}",
+                        'Price Δ': f"{price_dir}{price_change:.1f}%",
                         'Normal Margin': f"{item['other_margin']:.1f}%",
-                        'Post-Breach': f"{item['post_margin']:.1f}%",
-                        'Boost': f"+{item['boost']:.1f}%"
+                        'Post-Breach Margin': f"{item['post_margin']:.1f}%",
+                        'Margin Boost': f"+{item.get('margin_boost', item['boost']):.1f}%"
                     })
 
                 if scan_data:
                     df = pd.DataFrame(scan_data)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    st.caption("Based on last 48 hours of price data. Boost = Post-Breach margin minus Normal margin.")
+                    # Convert percentage strings to floats for sorting
+                    df['_price_sort'] = df['Price Δ'].str.replace('%', '').str.replace('+', '').astype(float)
+                    df['_margin_sort'] = df['Margin Boost'].str.replace('%', '').str.replace('+', '').astype(float)
+                    df = df.sort_values('_margin_sort', ascending=False).drop(columns=['_price_sort', '_margin_sort'])
+
+                    st.dataframe(
+                        df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            'Item': st.column_config.TextColumn('Item', width='medium'),
+                            'Normal Price': st.column_config.TextColumn('Normal Price', width='small'),
+                            'Post-Breach Price': st.column_config.TextColumn('Post-Breach Price', width='small'),
+                            'Price Δ': st.column_config.TextColumn('Price Δ', width='small'),
+                            'Normal Margin': st.column_config.TextColumn('Normal Margin', width='small'),
+                            'Post-Breach Margin': st.column_config.TextColumn('Post-Breach Margin', width='small'),
+                            'Margin Boost': st.column_config.TextColumn('Margin Boost', width='small'),
+                        }
+                    )
+                    st.caption("Based on last 48 hours. Price Δ = price change after breach. Margin Boost = margin increase after breach. Click column headers to sort.")
 
         # Show breach items
         breach_opps = scan_breach_items(prices, volumes, items, item_names)
@@ -2019,26 +2057,49 @@ else:
                 <div style="background: #1A1D24; padding: 10px 15px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid #D4AF37;">
                     <strong style="color: #D4AF37;">What this means:</strong><br>
                     <span style="color: #A0A0A0; font-size: 0.9rem;">
-                        After breaches, players restock consumables (food, pots, runes), causing temporary margin spikes.
-                        These items historically show higher margins in the <strong>0-2 hours after breach</strong>.
+                        After breaches, players restock consumables (food, pots, runes), causing price and margin changes.
+                        Data shows behavior in the <strong>0-2 hours after breach</strong> vs normal times.
                     </span>
                 </div>
                 """, unsafe_allow_html=True)
 
                 scan_data = []
-                for item in scanned[:8]:
+                for item in scanned[:10]:
                     item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
+                    price_change = item.get('price_change_pct', 0)
+                    price_dir = "+" if price_change >= 0 else ""
                     scan_data.append({
                         'Item': item_name,
+                        'Normal Price': f"{item.get('other_price', 0):,.0f}",
+                        'Post-Breach Price': f"{item.get('post_price', 0):,.0f}",
+                        'Price Δ': f"{price_dir}{price_change:.1f}%",
                         'Normal Margin': f"{item['other_margin']:.1f}%",
-                        'Post-Breach': f"{item['post_margin']:.1f}%",
-                        'Boost': f"+{item['boost']:.1f}%"
+                        'Post-Breach Margin': f"{item['post_margin']:.1f}%",
+                        'Margin Boost': f"+{item.get('margin_boost', item['boost']):.1f}%"
                     })
 
                 if scan_data:
                     df = pd.DataFrame(scan_data)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
-                    st.caption("Based on last 48 hours of price data. Boost = Post-Breach margin minus Normal margin.")
+                    # Convert percentage strings to floats for sorting
+                    df['_price_sort'] = df['Price Δ'].str.replace('%', '').str.replace('+', '').astype(float)
+                    df['_margin_sort'] = df['Margin Boost'].str.replace('%', '').str.replace('+', '').astype(float)
+                    df = df.sort_values('_margin_sort', ascending=False).drop(columns=['_price_sort', '_margin_sort'])
+
+                    st.dataframe(
+                        df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            'Item': st.column_config.TextColumn('Item', width='medium'),
+                            'Normal Price': st.column_config.TextColumn('Normal Price', width='small'),
+                            'Post-Breach Price': st.column_config.TextColumn('Post-Breach Price', width='small'),
+                            'Price Δ': st.column_config.TextColumn('Price Δ', width='small'),
+                            'Normal Margin': st.column_config.TextColumn('Normal Margin', width='small'),
+                            'Post-Breach Margin': st.column_config.TextColumn('Post-Breach Margin', width='small'),
+                            'Margin Boost': st.column_config.TextColumn('Margin Boost', width='small'),
+                        }
+                    )
+                    st.caption("Based on last 48 hours. Price Δ = price change after breach. Margin Boost = margin increase after breach. Click column headers to sort.")
 
     st.markdown("---")
 

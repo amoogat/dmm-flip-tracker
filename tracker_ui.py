@@ -1294,36 +1294,50 @@ if triggered_alerts:
         st.warning(f"🔔 **{ta['item']}**: {ta['type']} {ta['target']:,} (Current: {ta['current']:,})")
 
 # === QUICK PRICE ALERT (Top of page) ===
-with st.expander("🔔 Quick Price Alert", expanded=False):
-    alert_cols = st.columns([3, 2, 2, 1])
+with st.expander("🔔 Quick Price Alert - Click to add alerts", expanded=False):
+    st.caption("Get notified when prices hit your targets")
 
-    with alert_cols[0]:
-        main_alert_search = st.text_input("Search item", key="main_alert_search", placeholder="Type item name...")
+    col_search, col_type, col_price, col_btn = st.columns([3, 2, 2, 1])
+
+    with col_search:
+        main_alert_search = st.text_input("🔍 Search item", key="main_alert_search")
 
     main_alert_item = None
+    main_alert_item_id = None
+    main_curr_high = 0
+    main_curr_low = 0
+
     if main_alert_search and data_ok:
         main_alert_matching = [n for n in item_names.keys() if main_alert_search.lower() in n][:8]
         if main_alert_matching:
-            with alert_cols[0]:
-                main_alert_item = st.selectbox("Select", main_alert_matching, key="main_alert_select", )
+            main_alert_item = st.selectbox("Select item", main_alert_matching, key="main_alert_select")
+
+            if main_alert_item:
+                main_alert_item_id = item_names[main_alert_item]
+                main_ap = prices.get(str(main_alert_item_id), {})
+                main_curr_high = main_ap.get('high', 0)
+                main_curr_low = main_ap.get('low', 0)
+                st.info(f"**{main_alert_item}** — High: **{main_curr_high:,}** | Low: **{main_curr_low:,}**")
 
     if main_alert_item:
-        main_alert_item_id = item_names[main_alert_item]
-        main_ap = prices.get(str(main_alert_item_id), {})
-        main_curr_high = main_ap.get('high', 0)
-        main_curr_low = main_ap.get('low', 0)
+        with col_type:
+            main_alert_type = st.selectbox("Alert when", ["High ≥", "High ≤", "Low ≥", "Low ≤"], key="main_alert_type")
 
-        with alert_cols[1]:
-            st.caption(f"High: {main_curr_high:,} | Low: {main_curr_low:,}")
-            main_alert_type = st.selectbox("When...", ["High ≥", "High ≤", "Low ≥", "Low ≤"], key="main_alert_type", )
+        with col_price:
+            # Auto-fill based on alert type
+            if "High" in main_alert_type:
+                suggested_price = main_curr_high
+            else:
+                suggested_price = main_curr_low
+            suggested_price = max(1, suggested_price)
 
-        with alert_cols[2]:
-            main_default = max(1, main_curr_high if "High" in main_alert_type else main_curr_low)
-            main_alert_price = st.number_input("Price", value=main_default, min_value=1, key="main_alert_price", )
+            main_alert_price = st.number_input("Target price", value=suggested_price, min_value=1, key="main_alert_price")
 
-        with alert_cols[3]:
-            st.write("")  # Spacing
-            if st.button("➕ Add", key="main_add_alert"):
+        with col_btn:
+            st.markdown("<br>", unsafe_allow_html=True)  # Spacing to align button
+            add_clicked = st.button("🔔 Add Alert", key="main_add_alert")
+
+            if add_clicked:
                 alerts_list = load_alerts()
                 new_alert = {
                     'item': items[main_alert_item_id]['name'],
@@ -1341,7 +1355,7 @@ with st.expander("🔔 Quick Price Alert", expanded=False):
 
                 alerts_list.append(new_alert)
                 save_alerts(alerts_list)
-                st.success(f"✅ Alert added for {main_alert_item}!")
+                st.success(f"✅ Alert added: {main_alert_item} when {main_alert_type} {main_alert_price:,}")
                 rerun()
 
 st.markdown("---")

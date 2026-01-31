@@ -918,11 +918,11 @@ def style_dataframe(df, color_cols=None, format_cols=None):
     # Apply number formatting
     format_dict = {}
     for col in df.columns:
-        if col in ['Buy', 'Sell', 'Profit', 'Vol/hr', 'GP/hr', 'My Price', 'Market High', 'Market Low', 'Current High', 'Current Low', 'Diff', 'Target/hr', 'Done']:
+        if col in ['Buy', 'Sell', 'Profit', 'Vol/hr', 'GP/hr', 'My Price', 'Market High', 'Market Low', 'Current High', 'Current Low', 'Diff', 'Target/hr', 'Done', '💎Potential']:
             format_dict[col] = '{:,.0f}'
         elif col in ['Margin %']:
             format_dict[col] = '{:.2f}%'  # Add % symbol
-        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Qty', '#', '💎Potential']:
+        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Qty', '#']:
             format_dict[col] = '{:.0f}'
 
     if format_dict:

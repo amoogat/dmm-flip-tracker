@@ -911,19 +911,23 @@ st.sidebar.caption("Uncheck to see all items (may include dead ones)")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔄 Auto-Refresh")
-# Use session_state to persist settings across reruns
-if 'auto_refresh' not in st.session_state:
-    st.session_state['auto_refresh'] = False  # Default OFF
-if 'refresh_interval' not in st.session_state:
-    st.session_state['refresh_interval'] = 60  # Default 60s
 
-auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=st.session_state['auto_refresh'], key="auto_refresh_cb")
-st.session_state['auto_refresh'] = auto_refresh
+# Initialize defaults in session_state (use widget keys directly)
+if 'auto_refresh_on' not in st.session_state:
+    st.session_state['auto_refresh_on'] = True  # Default ON
+
+if 'refresh_secs' not in st.session_state:
+    st.session_state['refresh_secs'] = 60
+
+# Widgets without key - use value from session_state, update on change
+auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=st.session_state['auto_refresh_on'])
+st.session_state['auto_refresh_on'] = auto_refresh
 
 interval_options = [30, 60, 120, 300]
-interval_idx = interval_options.index(st.session_state['refresh_interval']) if st.session_state['refresh_interval'] in interval_options else 1
-refresh_interval = st.sidebar.selectbox("Refresh every", interval_options, index=interval_idx, format_func=lambda x: f"{x} seconds", key="refresh_int_sel")
-st.session_state['refresh_interval'] = refresh_interval
+current_interval = st.session_state['refresh_secs']
+interval_idx = interval_options.index(current_interval) if current_interval in interval_options else 1
+refresh_interval = st.sidebar.selectbox("Refresh every", interval_options, index=interval_idx, format_func=lambda x: f"{x} seconds")
+st.session_state['refresh_secs'] = refresh_interval
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ Add GE Offer")

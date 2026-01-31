@@ -12,6 +12,14 @@ from datetime import datetime
 import statistics
 import pandas as pd
 
+# === COMPATIBILITY ===
+def rerun():
+    """Compatible rerun for both old and new Streamlit versions"""
+    try:
+        st.rerun()  # New Streamlit (1.27+)
+    except AttributeError:
+        rerun()  # Old Streamlit
+
 # === CONFIG ===
 API_BASE = "https://prices.runescape.wiki/api/v1/dmm"
 HEADERS = {"User-Agent": "DMM-Flip-Tracker/2026"}
@@ -482,7 +490,7 @@ st.sidebar.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
 
 if st.sidebar.button("🔄 Refresh"):
     st.cache.clear()
-    st.experimental_rerun()
+    rerun()
 
 # === USER NICKNAME (for saving/loading data) ===
 st.sidebar.markdown("---")
@@ -498,7 +506,7 @@ if st.sidebar.button("🚀 Start / Load"):
         else:
             st.session_state['nickname'] = nickname_input
             st.sidebar.success(f"New profile: {nickname_input}")
-        st.experimental_rerun()
+        rerun()
     else:
         st.sidebar.warning("Enter a nickname first")
 
@@ -557,7 +565,7 @@ if selected_item:
             'qty': int(qty)
         })
         save_positions(pos)
-        st.experimental_rerun()
+        rerun()
 
 # === SIDEBAR: PRICE ALERTS ===
 st.sidebar.markdown("---")
@@ -628,7 +636,7 @@ if alert_item:
 
             alerts_list.append(new_alert)
             save_alerts(alerts_list)
-            st.experimental_rerun()
+            rerun()
 
 # === MAIN ===
 st.title("DMM 2026 Flip Tracker")
@@ -877,7 +885,7 @@ if view == "📋 Smart Planner":
         # Show what was picked with volume/freshness info
         st.success(f"✅ Plan generated! {len(plan_items)} items, using {planner_capital - remaining_capital:,} GP")
         st.caption("Items picked based on: Volume + Freshness + Profit + Stability")
-        st.experimental_rerun()
+        rerun()
 
     # Show current plan
     plans = load_plans()
@@ -918,7 +926,7 @@ if view == "📋 Smart Planner":
                 'added_time': int(time.time())
             })
             save_plans(plans)
-            st.experimental_rerun()
+            rerun()
 
     # --- Current Plan Display ---
     plans = load_plans()
@@ -1019,7 +1027,7 @@ if view == "📋 Smart Planner":
             if cols[3].button("❌", key=f"del_{i}"):
                 plans['items'].pop(i)
                 save_plans(plans)
-                st.experimental_rerun()
+                rerun()
 
             # Auto-save changes immediately
             if new_completed != item.get('completed', 0):
@@ -1032,7 +1040,7 @@ if view == "📋 Smart Planner":
         # Reset button
         if st.button("🔄 Reset Plan"):
             save_plans({'items': [], 'start_time': None, 'start_capital': 0})
-            st.experimental_rerun()
+            rerun()
 
     else:
         st.info("👆 Generate a smart plan above, or add custom items manually!")
@@ -1126,7 +1134,7 @@ else:
             if cols[i].button(f"❌ {i+1}", key=f"rm{i}"):
                 positions.pop(i)
                 save_positions(positions)
-                st.experimental_rerun()
+                rerun()
 
         st.caption("🔵 BUY = waiting to buy | 🟢 SELL = waiting to sell")
         st.markdown("---")
@@ -1176,13 +1184,13 @@ else:
             if cols[col_idx].button(f"{'🔇' if enabled else '🔔'}{i+1}", key=f"tog{i}"):
                 price_alerts[i]['enabled'] = not enabled
                 save_alerts(price_alerts)
-                st.experimental_rerun()
+                rerun()
             col_idx += 1
             # Delete button
             if cols[col_idx].button(f"❌{i+1}", key=f"del{i}"):
                 price_alerts.pop(i)
                 save_alerts(price_alerts)
-                st.experimental_rerun()
+                rerun()
             col_idx += 1
 
         st.caption("🔔 = Enable | 🔇 = Disable | ❌ = Delete")

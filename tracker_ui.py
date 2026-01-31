@@ -231,6 +231,41 @@ def get_freshness_info(prices_data, item_id):
     else:
         return age, "🟢 Fresh", 1.0
 
+def style_dataframe(df, color_cols=None, format_cols=None):
+    """Style a dataframe with colors and formatting"""
+    if color_cols is None:
+        color_cols = []
+    if format_cols is None:
+        format_cols = {}
+
+    # Create styler
+    styler = df.style
+
+    # Apply number formatting
+    format_dict = {}
+    for col in df.columns:
+        if col in ['Buy', 'Sell', 'Profit', 'Vol/hr', 'GP/hr', 'My Price', 'Market High', 'Market Low', 'Current High', 'Current Low', 'Diff', 'Target/hr', 'Done']:
+            format_dict[col] = '{:,.0f}'
+        elif col in ['Margin %']:
+            format_dict[col] = '{:.2f}'
+        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Limit', 'Qty', '#']:
+            format_dict[col] = '{:.0f}'
+
+    if format_dict:
+        styler = styler.format(format_dict)
+
+    # Apply color gradients (red to green)
+    for col in color_cols:
+        if col in df.columns:
+            try:
+                # Check if column has numeric data
+                if df[col].dtype in ['int64', 'float64', 'int32', 'float32']:
+                    styler = styler.background_gradient(subset=[col], cmap='RdYlGn')
+            except:
+                pass  # Skip if column can't be styled
+
+    return styler
+
 def check_alerts(alerts, prices, item_names):
     """Check which alerts are triggered and return list of triggered alerts"""
     triggered = []
@@ -554,6 +589,11 @@ st.sidebar.subheader("🔧 Filters")
 filter_stale = st.sidebar.checkbox("Filter stale prices (>10 min)", value=True)
 filter_low_vol = st.sidebar.checkbox("Filter low volume (<5/hr)", value=True)
 st.sidebar.caption("Uncheck to see all items (may include dead ones)")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔄 Auto-Refresh")
+auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=True)
+refresh_interval = st.sidebar.selectbox("Refresh every", [15, 30, 60, 120], index=1, format_func=lambda x: f"{x} seconds")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ Add GE Offer")
@@ -999,7 +1039,8 @@ if view == "📋 Smart Planner":
                 st.caption(warn)
 
         df = pd.DataFrame(plan_data)
-        st.dataframe(df)
+        styled_df = style_dataframe(df, color_cols=['Vol/hr', 'GP/hr'])
+        st.dataframe(styled_df)
 
         st.markdown(f"### 💰 Realistic Est: {total_profit_hr:,.0f} GP/hr | Completed: {total_completed} flips")
         st.caption("GP/hr adjusted for freshness - stale items count less")
@@ -1128,7 +1169,8 @@ else:
 
         if pos_data:
             df = pd.DataFrame(pos_data)
-            st.dataframe(df)
+            styled_df = style_dataframe(df, color_cols=['Diff'])
+            st.dataframe(styled_df)
 
         # Delete buttons in a row
         st.write("Remove offer:")
@@ -1235,7 +1277,8 @@ else:
                 'Limit': items.get(s.get('item_id'), {}).get('limit', 0)
             })
         df = pd.DataFrame(stable_data)
-        st.dataframe(df)
+        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        st.dataframe(styled_df)
         st.caption("Stab=Stability Score | Price/Margin=Trends | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
     else:
         st.info(f"Building data... tracking {len(history)} items. Keep page open!")
@@ -1282,10 +1325,16 @@ else:
                 'Limit': opp['limit']
             })
         df = pd.DataFrame(opp_data)
-        st.dataframe(df)
+        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        st.dataframe(styled_df)
         st.caption("Stab=Stability | Trend=Price direction | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
     else:
         st.info("No opportunities with current filters")
 
     st.markdown("---")
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")
+
+# === AUTO-REFRESH ===
+if auto_refresh:
+    st.markdown(f'<meta http-equiv="refresh" content="{refresh_interval}">', unsafe_allow_html=True)
+    st.caption(f"🔄 Auto-refreshing every {refresh_interval}s")

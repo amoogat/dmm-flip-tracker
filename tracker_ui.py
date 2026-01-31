@@ -18,7 +18,20 @@ def rerun():
     try:
         st.rerun()  # New Streamlit (1.27+)
     except AttributeError:
-        rerun()  # Old Streamlit
+        st.experimental_rerun()  # Old Streamlit
+
+def format_age(seconds):
+    """Format seconds into human-readable time like notebook"""
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        mins = seconds // 60
+        secs = seconds % 60
+        return f"{mins}m" if secs == 0 else f"{mins}m {secs}s"
+    else:
+        hours = seconds // 3600
+        mins = (seconds % 3600) // 60
+        return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
 
 # === CONFIG ===
 API_BASE = "https://prices.runescape.wiki/api/v1/dmm"
@@ -1209,24 +1222,31 @@ else:
                 freshness = "🟢"
             elif age < 180:
                 freshness = "🟡"
-            else:
+            elif age < 600:
                 freshness = "🟠"
+            else:
+                freshness = "🔴"
 
             stable_data.append({
                 'Item': s['name'],
                 'Buy': s['buy'],
                 'Sell': s['sell'],
-                'Vol/hr': s.get('volume', 0),
                 'Margin %': round(s['margin_pct'], 1),
+                'Vol/hr': s.get('volume', 0),
+                'Age': format_age(age),
                 'Fresh': freshness,
+                'Stab': s.get('score', 0),
+                'Price': s.get('price_trend', '-'),
+                'Margin': s.get('margin_trend', '-'),
                 '🔥Agg': s.get('smart_agg', 0),
                 '⚖️Bal': s.get('smart_bal', 0),
-                '🛡️Safe': s.get('smart_con', 0),
-                'Profit': s['profit']
+                '🛡️Con': s.get('smart_con', 0),
+                'Profit': s['profit'],
+                'Limit': items.get(s.get('item_id'), {}).get('limit', '-')
             })
         df = pd.DataFrame(stable_data)
         st.dataframe(df)
-        st.caption("Sorted by 🔥Aggressive. 🔥Agg | ⚖️Bal | 🛡️Safe - Click to re-sort!")
+        st.caption("Stab=Stability Score | Price/Margin=Trends | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
     else:
         st.info(f"Building data... tracking {len(history)} items. Keep page open!")
 
@@ -1245,8 +1265,15 @@ else:
                 freshness = "🟢"
             elif age < 180:
                 freshness = "🟡"
-            else:
+            elif age < 600:
                 freshness = "🟠"
+            else:
+                freshness = "🔴"
+
+            # Get stability/trend data if available
+            analysis = analyze_stability(opp['id'], history, items)
+            stab = int(analysis['stability_score']) if analysis else '-'
+            trend = analysis['price_trend'] if analysis else '-'
 
             opp_data.append({
                 'Item': opp['name'],
@@ -1254,15 +1281,19 @@ else:
                 'Sell': opp['sell'],
                 'Margin %': round(opp['margin_pct'], 1),
                 'Vol/hr': opp['volume'],
+                'Age': format_age(age),
                 'Fresh': freshness,
+                'Stab': stab,
+                'Trend': trend,
                 '🔥Agg': opp['smart_agg'],
                 '⚖️Bal': opp['smart_bal'],
-                '🛡️Safe': opp['smart_con'],
-                'Profit': opp['profit']
+                '🛡️Con': opp['smart_con'],
+                'Profit': opp['profit'],
+                'Limit': opp['limit']
             })
         df = pd.DataFrame(opp_data)
         st.dataframe(df)
-        st.caption("🔥Agg = Aggressive | ⚖️Bal = Balanced | 🛡️Safe = Conservative")
+        st.caption("Stab=Stability | Trend=Price direction | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
     else:
         st.info("No opportunities with current filters")
 

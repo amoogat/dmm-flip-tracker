@@ -547,16 +547,18 @@ def auto_save():
 
 # === DATA FUNCTIONS (persistent files + session state) ===
 def load_positions():
-    """Load GE positions from persistent file"""
-    if 'positions' not in st.session_state:
-        if os.path.exists(POSITIONS_FILE):
-            try:
-                with open(POSITIONS_FILE, 'r') as f:
-                    st.session_state['positions'] = json.load(f)
-            except:
+    """Load GE positions from persistent file - always reload"""
+    if os.path.exists(POSITIONS_FILE):
+        try:
+            with open(POSITIONS_FILE, 'r') as f:
+                file_positions = json.load(f)
+                if not st.session_state.get('positions'):
+                    st.session_state['positions'] = file_positions
+        except:
+            if 'positions' not in st.session_state:
                 st.session_state['positions'] = []
-        else:
-            st.session_state['positions'] = []
+    elif 'positions' not in st.session_state:
+        st.session_state['positions'] = []
     return st.session_state.get('positions', [])
 
 def save_positions(positions):
@@ -565,22 +567,25 @@ def save_positions(positions):
     try:
         with open(POSITIONS_FILE, 'w') as f:
             json.dump(positions, f, indent=2)
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"Could not save positions: {e}")
     auto_save()
 
 def load_alerts():
-    """Load alerts from persistent file"""
-    if 'alerts' not in st.session_state:
-        # Load from file on first access
-        if os.path.exists(ALERTS_FILE):
-            try:
-                with open(ALERTS_FILE, 'r') as f:
-                    st.session_state['alerts'] = json.load(f)
-            except:
+    """Load alerts from persistent file - always reload from file"""
+    # Always try to load from file first (handles meta refresh)
+    if os.path.exists(ALERTS_FILE):
+        try:
+            with open(ALERTS_FILE, 'r') as f:
+                file_alerts = json.load(f)
+                # Merge with session state (file takes precedence if session is empty)
+                if not st.session_state.get('alerts'):
+                    st.session_state['alerts'] = file_alerts
+        except:
+            if 'alerts' not in st.session_state:
                 st.session_state['alerts'] = []
-        else:
-            st.session_state['alerts'] = []
+    elif 'alerts' not in st.session_state:
+        st.session_state['alerts'] = []
     return st.session_state.get('alerts', [])
 
 def save_alerts(alerts):
@@ -589,26 +594,32 @@ def save_alerts(alerts):
     try:
         with open(ALERTS_FILE, 'w') as f:
             json.dump(alerts, f, indent=2)
-    except:
-        pass
+    except Exception as e:
+        st.warning(f"Could not save alerts: {e}")
     auto_save()
 
 def load_settings():
-    """Load user settings (capital, nickname, etc.) from persistent file"""
-    if 'settings_loaded' not in st.session_state:
-        st.session_state['settings_loaded'] = True
-        if os.path.exists(SETTINGS_FILE):
-            try:
-                with open(SETTINGS_FILE, 'r') as f:
-                    settings = json.load(f)
+    """Load user settings (capital, nickname, etc.) from persistent file - always reload"""
+    # Always try to load from file (handles meta refresh)
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, 'r') as f:
+                settings = json.load(f)
+                # Only load if session_state doesn't have values yet
+                if 'capital' not in st.session_state or st.session_state.get('capital') == 50000:
                     st.session_state['capital'] = settings.get('capital', 50000)
+                if 'nickname' not in st.session_state or st.session_state.get('nickname') == '':
                     st.session_state['nickname'] = settings.get('nickname', '')
+                if 'min_margin' not in st.session_state:
                     st.session_state['min_margin'] = settings.get('min_margin', 3)
+                if 'max_margin' not in st.session_state:
                     st.session_state['max_margin'] = settings.get('max_margin', 30)
+                if 'filter_stale' not in st.session_state:
                     st.session_state['filter_stale'] = settings.get('filter_stale', True)
+                if 'filter_low_vol' not in st.session_state:
                     st.session_state['filter_low_vol'] = settings.get('filter_low_vol', True)
-            except:
-                pass
+        except:
+            pass
     return {
         'capital': st.session_state.get('capital', 50000),
         'nickname': st.session_state.get('nickname', ''),
@@ -1236,44 +1247,17 @@ if 'view' not in st.session_state:
     st.session_state['view'] = 'dashboard'
 
 current_view = st.session_state.get('view', 'dashboard')
-dash_active = "active" if current_view == 'dashboard' else ""
-plan_active = "active" if current_view == 'planner' else ""
 
-# Render menu bar HTML
-st.markdown(f"""
-<div class="menu-bar">
-    <div class="menu-tab {dash_active}" id="dash-tab">📊 Dashboard</div>
-    <div class="menu-tab {plan_active}" id="plan-tab">📋 Smart Planner</div>
-</div>
-""", unsafe_allow_html=True)
-
-# Hidden buttons for actual navigation (styled to be minimal)
-st.markdown("""
-<style>
-    div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) {
-        margin-top: -15px;
-        margin-bottom: 10px;
-    }
-    div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) button {
-        background: transparent !important;
-        border: none !important;
-        color: transparent !important;
-        height: 35px;
-        box-shadow: none !important;
-    }
-    div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) button:hover {
-        background: rgba(212, 175, 55, 0.1) !important;
-    }
-</style>
-""", unsafe_allow_html=True)
-
+# Tab navigation buttons (simple and visible)
 col1, col2 = st.columns(2)
 with col1:
-    if st.button("​", key="tab_dash"):  # Zero-width space
+    dash_label = "● 📊 Dashboard" if current_view == 'dashboard' else "📊 Dashboard"
+    if st.button(dash_label, key="tab_dash"):
         st.session_state['view'] = 'dashboard'
         rerun()
 with col2:
-    if st.button("​", key="tab_plan"):  # Zero-width space
+    plan_label = "● 📋 Smart Planner" if current_view == 'planner' else "📋 Smart Planner"
+    if st.button(plan_label, key="tab_plan"):
         st.session_state['view'] = 'planner'
         rerun()
 

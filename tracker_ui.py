@@ -1712,4 +1712,4 @@ else:
 # === AUTO-REFRESH ===
 if auto_refresh:
     st.markdown(f'<meta http-equiv="refresh" content="{refresh_interval}">', unsafe_allow_html=True)
-    st.caption(f"🔄 Auto-refreshing every {refresh_interval}s")
+    st.caption(f"🔄 Auto-refreshing every {refresh_interval}s (state resets on refresh - this is normal)")

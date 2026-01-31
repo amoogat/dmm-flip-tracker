@@ -945,10 +945,10 @@ if selected_item:
     offer_type = st.sidebar.radio("Offer type", ["Buy Offer", "Sell Offer"])
 
     if offer_type == "Buy Offer":
-        default_price = curr_low  # usually offer below instant sell
+        default_price = max(1, curr_low)  # usually offer below instant sell
         st.sidebar.caption("You're waiting to BUY. Alert if someone sells for MORE than your offer.")
     else:
-        default_price = curr_high  # usually offer above instant buy
+        default_price = max(1, curr_high)  # usually offer above instant buy
         st.sidebar.caption("You're waiting to SELL. Alert if someone undercuts you.")
 
     my_price = st.sidebar.number_input("My offer price", value=default_price, min_value=1)
@@ -992,9 +992,9 @@ if alert_item:
     ])
 
     if "High" in alert_type:
-        default_val = alert_curr_high
+        default_val = max(1, alert_curr_high)
     else:
-        default_val = alert_curr_low
+        default_val = max(1, alert_curr_low)
 
     alert_price = st.sidebar.number_input("Target price", value=default_val, min_value=1, key="alert_price")
 

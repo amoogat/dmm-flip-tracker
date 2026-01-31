@@ -553,12 +553,16 @@ def style_dataframe(df, color_cols=None, format_cols=None):
         if col in ['Buy', 'Sell', 'Profit', 'Vol/hr', 'GP/hr', 'My Price', 'Market High', 'Market Low', 'Current High', 'Current Low', 'Diff', 'Target/hr', 'Done']:
             format_dict[col] = '{:,.0f}'
         elif col in ['Margin %']:
-            format_dict[col] = '{:.2f}'
+            format_dict[col] = '{:.2f}%'  # Add % symbol
         elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Limit', 'Qty', '#']:
             format_dict[col] = '{:.0f}'
 
     if format_dict:
         styler = styler.format(format_dict)
+
+    # Always add Margin % to color columns if present
+    if 'Margin %' in df.columns and 'Margin %' not in color_cols:
+        color_cols = list(color_cols) + ['Margin %']
 
     # Apply color gradients (red to green)
     for col in color_cols:
@@ -776,18 +780,25 @@ def get_stable_picks(items, history, prices, volumes, capital, filter_stale=True
             continue
 
         a = analyze_stability(item_id, history, items)
-        if not a or a['samples'] < 3 or a['stability_score'] < 20 or a['latest_buy'] > capital:
+        if not a or a['samples'] < 3 or a['stability_score'] < 20:
             continue
 
-        max_qty = min(capital // a['latest_buy'], items[item_id]['limit'])
-        if max_qty < 1:
-            continue
-
-        # Get current price freshness
+        # Get LIVE prices from API (not history!)
         p = prices.get(item_id_str, {})
+        live_buy = p.get('high', 0)  # Instant buy price
+        live_sell = p.get('low', 0)   # Instant sell price
         high_time = p.get('highTime', 0)
         low_time = p.get('lowTime', 0)
         age = max(now - high_time, now - low_time) if high_time and low_time else 9999
+
+        # Skip if no live prices or can't afford
+        if not live_buy or not live_sell or live_buy > capital:
+            continue
+
+        # Calculate max qty based on LIVE price
+        max_qty = min(capital // live_buy, items[item_id]['limit'])
+        if max_qty < 1:
+            continue
 
         # Filter stale prices (> 10 min) - optional
         if filter_stale and age > 600:
@@ -801,7 +812,9 @@ def get_stable_picks(items, history, prices, volumes, capital, filter_stale=True
         if filter_low_vol and vol < 5:
             continue
 
-        margin = a['latest_buy'] - a['latest_sell'] - int(a['latest_buy'] * 0.01)
+        # Use LIVE prices for margin calculation
+        margin = live_buy - live_sell - int(live_buy * 0.01)
+        live_margin_pct = (margin / live_sell * 100) if live_sell > 0 else 0
 
         # Calculate smart scores for each strategy
         # Freshness multiplier
@@ -827,9 +840,9 @@ def get_stable_picks(items, history, prices, volumes, capital, filter_stale=True
         stable.append({
             'name': items[item_id]['name'],
             'item_id': item_id,
-            'buy': a['latest_buy'], 'sell': a['latest_sell'],
+            'buy': live_buy, 'sell': live_sell,  # LIVE prices!
             'avg_buy': a['avg_buy'], 'avg_sell': a['avg_sell'],
-            'margin_pct': a['latest_margin'], 'avg_margin': a['avg_margin'],
+            'margin_pct': live_margin_pct, 'avg_margin': a['avg_margin'],  # LIVE margin!
             'margin_trend': a['margin_trend'], 'price_trend': a['price_trend'],
             'score': a['stability_score'], 'samples': a['samples'],
             'profit': margin * max_qty, 'qty': max_qty,

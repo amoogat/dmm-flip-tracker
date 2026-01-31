@@ -1922,11 +1922,31 @@ else:
         # Show scan results if available
         if 'breach_scan_results' in st.session_state and st.session_state['breach_scan_results']:
             scanned = st.session_state['breach_scan_results']
-            st.success(f"Found {len(scanned)} items with breach boosts!")
-            for item in scanned[:5]:
-                # Get item name from items dict
-                item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
-                st.caption(f"• {item_name}: +{item['boost']:.1f}% margin boost")
+            with st.expander(f"📊 Breach Scan Results ({len(scanned)} items found)", expanded=True):
+                st.markdown("""
+                <div style="background: #1A1D24; padding: 10px 15px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid #D4AF37;">
+                    <strong style="color: #D4AF37;">What this means:</strong><br>
+                    <span style="color: #A0A0A0; font-size: 0.9rem;">
+                        After breaches, players restock consumables (food, pots, runes), causing temporary margin spikes.
+                        These items historically show higher margins in the <strong>0-2 hours after breach</strong>.
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                scan_data = []
+                for item in scanned[:8]:
+                    item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
+                    scan_data.append({
+                        'Item': item_name,
+                        'Normal Margin': f"{item['other_margin']:.1f}%",
+                        'Post-Breach': f"{item['post_margin']:.1f}%",
+                        'Boost': f"+{item['boost']:.1f}%"
+                    })
+
+                if scan_data:
+                    df = pd.DataFrame(scan_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.caption("Based on last 48 hours of price data. Boost = Post-Breach margin minus Normal margin.")
 
         # Show breach items
         breach_opps = scan_breach_items(prices, volumes, items, item_names)
@@ -1994,11 +2014,31 @@ else:
         # Show scan results if available
         if 'breach_scan_results' in st.session_state and st.session_state['breach_scan_results']:
             scanned = st.session_state['breach_scan_results']
-            st.success(f"Found {len(scanned)} items with breach boosts!")
-            for item in scanned[:5]:
-                # Get item name from items dict
-                item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
-                st.caption(f"• {item_name}: +{item['boost']:.1f}% margin boost")
+            with st.expander(f"📊 Breach Scan Results ({len(scanned)} items found)", expanded=True):
+                st.markdown("""
+                <div style="background: #1A1D24; padding: 10px 15px; border-radius: 6px; margin-bottom: 10px; border-left: 3px solid #D4AF37;">
+                    <strong style="color: #D4AF37;">What this means:</strong><br>
+                    <span style="color: #A0A0A0; font-size: 0.9rem;">
+                        After breaches, players restock consumables (food, pots, runes), causing temporary margin spikes.
+                        These items historically show higher margins in the <strong>0-2 hours after breach</strong>.
+                    </span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                scan_data = []
+                for item in scanned[:8]:
+                    item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
+                    scan_data.append({
+                        'Item': item_name,
+                        'Normal Margin': f"{item['other_margin']:.1f}%",
+                        'Post-Breach': f"{item['post_margin']:.1f}%",
+                        'Boost': f"+{item['boost']:.1f}%"
+                    })
+
+                if scan_data:
+                    df = pd.DataFrame(scan_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+                    st.caption("Based on last 48 hours of price data. Boost = Post-Breach margin minus Normal margin.")
 
     st.markdown("---")
 

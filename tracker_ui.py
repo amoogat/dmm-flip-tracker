@@ -8,7 +8,7 @@ import requests
 import json
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import statistics
 import pandas as pd
 
@@ -32,6 +32,176 @@ def format_age(seconds):
         hours = seconds // 3600
         mins = (seconds % 3600) // 60
         return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
+
+# === BREACH SYSTEM ===
+BREACH_HOURS_UTC = [2, 10, 19]  # Breach times in UTC
+BREACH_DURATION_HOURS = 2  # Post-breach window duration
+
+# Items known to have post-breach margin boosts (from analysis)
+BREACH_ITEMS = {
+    3024: {'name': 'Super restore(4)', 'boost': 25.8},
+    391: {'name': 'Manta ray', 'boost': 14.2},
+    6685: {'name': 'Saradomin brew(4)', 'boost': 12.6},
+    385: {'name': 'Shark', 'boost': 9.7},
+    9075: {'name': 'Astral rune', 'boost': 6.3},
+    560: {'name': 'Death rune', 'boost': 5.1},
+}
+
+def get_breach_info():
+    """Get current breach status and countdown to next breach"""
+    now = datetime.now(timezone.utc)
+    current_hour = now.hour
+    current_minute = now.minute
+
+    # Check if we're in a post-breach window (0-2 hours after breach)
+    in_post_breach = False
+    current_breach = None
+    for breach_hour in BREACH_HOURS_UTC:
+        if breach_hour <= current_hour < breach_hour + BREACH_DURATION_HOURS:
+            in_post_breach = True
+            current_breach = breach_hour
+            break
+
+    # Find next breach
+    next_breach = None
+    for breach_hour in sorted(BREACH_HOURS_UTC):
+        if breach_hour > current_hour or (breach_hour == current_hour and current_minute == 0):
+            next_breach = breach_hour
+            break
+
+    # If no breach found today, next breach is tomorrow's first
+    if next_breach is None:
+        next_breach = BREACH_HOURS_UTC[0]
+        hours_until = (24 - current_hour) + next_breach
+    else:
+        hours_until = next_breach - current_hour
+
+    mins_until = (60 - current_minute) % 60
+    if mins_until > 0:
+        hours_until -= 1
+
+    # Format countdown
+    if hours_until < 0:
+        hours_until += 24
+
+    countdown = f"{hours_until}h {mins_until}m"
+
+    return {
+        'in_post_breach': in_post_breach,
+        'current_breach': current_breach,
+        'next_breach': next_breach,
+        'countdown': countdown,
+        'hours_until': hours_until + (mins_until / 60)
+    }
+
+def scan_breach_items(prices, volumes, items, item_names):
+    """Scan for items with good margins during post-breach window"""
+    breach_opps = []
+
+    for item_id, info in BREACH_ITEMS.items():
+        item_id_str = str(item_id)
+        if item_id_str not in prices:
+            continue
+
+        p = prices[item_id_str]
+        v = volumes.get(item_id_str, {})
+
+        high = p.get('high', 0)
+        low = p.get('low', 0)
+
+        if not high or not low or high <= low:
+            continue
+
+        margin = high - low - int(high * 0.01)
+        margin_pct = (margin / low) * 100 if low > 0 else 0
+
+        vol = (v.get('highPriceVolume', 0) or 0) + (v.get('lowPriceVolume', 0) or 0)
+
+        # Get item limit
+        limit = items.get(item_id, {}).get('limit', 1)
+
+        breach_opps.append({
+            'name': info['name'],
+            'item_id': item_id,
+            'buy': high,
+            'sell': low,
+            'margin': margin,
+            'margin_pct': margin_pct,
+            'volume': vol,
+            'limit': limit,
+            'boost': info['boost']
+        })
+
+    # Sort by boost (known margin increase)
+    breach_opps.sort(key=lambda x: -x['boost'])
+    return breach_opps
+
+def fetch_breach_scanner_data():
+    """Fetch timeseries data to find current best breach items dynamically"""
+    try:
+        # Get high-volume consumables to scan
+        scan_items = [
+            3024, 6685, 385, 391, 11936,  # Food/pots
+            560, 562, 555, 557, 9075,  # Runes
+            2440, 2436, 2442, 3040,  # Combat pots
+            892, 890, 888,  # Arrows
+        ]
+
+        results = []
+        now = datetime.now(timezone.utc)
+
+        for item_id in scan_items:
+            try:
+                resp = requests.get(
+                    f"https://prices.runescape.wiki/api/v1/dmm/timeseries?id={item_id}&timestep=1h",
+                    headers={"User-Agent": "DMM-Flip-Tracker/2026"},
+                    timeout=5
+                )
+                data = resp.json().get('data', [])[-48:]
+
+                if len(data) < 10:
+                    continue
+
+                # Analyze post-breach vs other margins
+                post_margins = []
+                other_margins = []
+
+                for point in data:
+                    ts = point['timestamp']
+                    high = point.get('avgHighPrice') or 0
+                    low = point.get('avgLowPrice') or 0
+
+                    if high > 0 and low > 0:
+                        margin = (high - low) / low * 100
+                        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                        hour = dt.hour
+
+                        # Check if in post-breach window
+                        is_post = any(bh <= hour < bh + 2 for bh in BREACH_HOURS_UTC)
+
+                        if is_post:
+                            post_margins.append(margin)
+                        else:
+                            other_margins.append(margin)
+
+                if post_margins and other_margins:
+                    avg_post = sum(post_margins) / len(post_margins)
+                    avg_other = sum(other_margins) / len(other_margins)
+                    boost = avg_post - avg_other
+
+                    if boost > 3:  # Only include if significant boost
+                        results.append({
+                            'item_id': item_id,
+                            'boost': boost,
+                            'post_margin': avg_post,
+                            'other_margin': avg_other
+                        })
+            except:
+                pass
+
+        return sorted(results, key=lambda x: -x['boost'])[:10]
+    except:
+        return []
 
 # === CONFIG ===
 API_BASE = "https://prices.runescape.wiki/api/v1/dmm"
@@ -727,7 +897,7 @@ def style_dataframe(df, color_cols=None, format_cols=None):
             format_dict[col] = '{:,.0f}'
         elif col in ['Margin %']:
             format_dict[col] = '{:.2f}%'  # Add % symbol
-        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Limit', 'Qty', '#', '💎Pot']:
+        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Qty', '#', '💎Potential']:
             format_dict[col] = '{:.0f}'
 
     if format_dict:
@@ -1050,6 +1220,35 @@ st.sidebar.caption(f"Updated: {datetime.now().strftime('%H:%M:%S')}")
 if st.sidebar.button("🔄 Refresh"):
     st.cache.clear()
     rerun()
+
+# === BREACH INFO IN SIDEBAR ===
+breach_info = get_breach_info()
+if breach_info['in_post_breach']:
+    st.sidebar.markdown(f"""
+    <div style="background: #FF4757; padding: 10px; border-radius: 8px; text-align: center; margin: 10px 0;">
+        <strong style="color: white;">⚔️ POST-BREACH ACTIVE</strong><br>
+        <span style="color: #FFE0E0; font-size: 0.9rem;">Flip restocking items now!</span>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.sidebar.markdown(f"""
+    <div style="background: #1A1D24; padding: 8px 12px; border-radius: 6px; border-left: 3px solid #D4AF37; margin: 10px 0;">
+        <span style="color: #A0A0A0;">⚔️ Next Breach:</span>
+        <strong style="color: #D4AF37;"> {breach_info['countdown']}</strong>
+    </div>
+    """, unsafe_allow_html=True)
+
+# Dynamic breach scanner button
+if st.sidebar.button("🔍 Scan Breach Items"):
+    with st.sidebar:
+        with st.spinner("Scanning API for breach patterns..."):
+            scanned = fetch_breach_scanner_data()
+            if scanned:
+                st.success(f"Found {len(scanned)} items with breach boosts!")
+                for item in scanned[:5]:
+                    st.caption(f"• Item {item['item_id']}: +{item['boost']:.1f}% margin boost")
+            else:
+                st.info("No significant breach patterns found")
 
 # === USER NICKNAME (for saving/loading data) ===
 st.sidebar.markdown("---")
@@ -1694,6 +1893,77 @@ else:
     c4.metric("📊 GE Offers", len(positions))
     c5.metric("🔔 Alerts", f"{len([a for a in price_alerts if a.get('enabled', True)])}/{len(price_alerts)}")
 
+    # === BREACH COUNTDOWN ===
+    breach_info = get_breach_info()
+
+    if breach_info['in_post_breach']:
+        # We're in a post-breach window - show prominent alert
+        st.markdown(f"""
+        <div style="background: linear-gradient(90deg, #FF4757 0%, #FF6B7A 100%);
+                    padding: 15px 20px; border-radius: 10px; margin: 15px 0;
+                    border: 2px solid #FF4757; text-align: center;">
+            <span style="font-size: 1.5rem; font-weight: bold; color: white;">
+                ⚔️ POST-BREACH MODE ACTIVE ⚔️
+            </span>
+            <br>
+            <span style="color: #FFE0E0; font-size: 1rem;">
+                Breach at {breach_info['current_breach']:02d}:00 UTC ended recently — Margins boosted on restocking items!
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Show breach items
+        breach_opps = scan_breach_items(prices, volumes, items, item_names)
+        if breach_opps:
+            st.subheader("🔥 Breach Mode: Best Restock Flips")
+            st.caption("These items have historically higher margins after breaches when players restock")
+
+            breach_data = []
+            for b in breach_opps:
+                breach_data.append({
+                    'Item': b['name'],
+                    'Buy': b['buy'],
+                    'Sell': b['sell'],
+                    'Margin %': round(b['margin_pct'], 1),
+                    'Vol/hr': b['volume'],
+                    'Limit': b['limit'],
+                    'Boost': f"+{b['boost']:.0f}%"
+                })
+
+            if breach_data:
+                df = pd.DataFrame(breach_data)
+                styled_df = style_dataframe(df, color_cols=['Margin %', 'Vol/hr'])
+                st.dataframe(styled_df)
+                st.caption("Boost = historical margin increase during post-breach window")
+
+            st.markdown("---")
+    else:
+        # Show countdown to next breach
+        hours_until = breach_info['hours_until']
+        if hours_until <= 1:
+            urgency_color = "#FF4757"  # Red - imminent
+            urgency_text = "IMMINENT"
+        elif hours_until <= 3:
+            urgency_color = "#FFA502"  # Orange - soon
+            urgency_text = "SOON"
+        else:
+            urgency_color = "#00D26A"  # Green - plenty of time
+            urgency_text = ""
+
+        st.markdown(f"""
+        <div style="background: var(--bg-card); padding: 12px 20px; border-radius: 8px;
+                    margin: 10px 0; border-left: 4px solid {urgency_color};
+                    display: flex; justify-content: space-between; align-items: center;">
+            <span style="color: #A0A0A0;">
+                ⚔️ Next Breach: <strong style="color: {urgency_color};">{breach_info['next_breach']:02d}:00 UTC</strong>
+                {f' ({urgency_text})' if urgency_text else ''}
+            </span>
+            <span style="font-size: 1.3rem; font-weight: bold; color: {urgency_color};">
+                {breach_info['countdown']}
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
+
     st.markdown("---")
 
     # === SECTION: YOUR GE OFFERS (only show if any) ===
@@ -1857,9 +2127,9 @@ else:
             stab = int(analysis['stability_score']) if analysis else 0
             trend = analysis['price_trend'] if analysis else '—'
 
-            # Calculate Potential: margin % * min(vol/hr, limit)
+            # Calculate Potential: profit * min(vol/hr, limit) = GP potential per limit cycle
             effective_vol = min(opp['volume'], opp['limit'])
-            potential = round(opp['margin_pct'] * effective_vol, 0)
+            potential = round(opp['profit'] * effective_vol, 0)
 
             opp_data.append({
                 'Item': opp['name'],
@@ -1867,21 +2137,19 @@ else:
                 'Sell': opp['sell'],
                 'Margin %': round(opp['margin_pct'], 1),
                 'Vol/hr': opp['volume'],
-                'Age': format_age(age),
-                'Fresh': freshness,
-                '💎Pot': int(potential),
+                'Fresh': f"{freshness} {format_age(age)}",
+                '💎Potential': int(potential),
                 'Stab': stab,
                 'Trend': trend,
                 '🔥Agg': opp['smart_agg'],
                 '⚖️Bal': opp['smart_bal'],
                 '🛡️Con': opp['smart_con'],
-                'Profit': opp['profit'],
-                'Limit': opp['limit']
+                'Profit': opp['profit']
             })
         df = pd.DataFrame(opp_data)
-        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', '💎Pot', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', '💎Potential', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
         st.dataframe(styled_df)
-        st.caption("💎Pot = Margin% × min(Vol,Limit) | Stab=Stability | 🔥Agg | ⚖️Bal | 🛡️Con")
+        st.caption("💎Potential = Profit × min(Vol,Limit) | Stab=Stability | 🔥Agg | ⚖️Bal | 🛡️Con")
     else:
         st.info("No opportunities with current filters")
 
@@ -1905,10 +2173,10 @@ else:
             else:
                 freshness = "🔴"
 
-            # Calculate Potential: margin % * min(vol/hr, limit)
+            # Calculate Potential: profit * min(vol/hr, limit) = GP potential per limit cycle
             item_limit = items.get(s.get('item_id'), {}).get('limit', 1)
             effective_vol = min(s.get('volume', 0), item_limit)
-            potential = round(s['margin_pct'] * effective_vol, 0)
+            potential = round(s['profit'] * effective_vol, 0)
 
             stable_data.append({
                 'Item': s['name'],
@@ -1916,22 +2184,20 @@ else:
                 'Sell': s['sell'],
                 'Margin %': round(s['margin_pct'], 1),
                 'Vol/hr': s.get('volume', 0),
-                'Age': format_age(age),
-                'Fresh': freshness,
-                '💎Pot': int(potential),
+                'Fresh': f"{freshness} {format_age(age)}",
+                '💎Potential': int(potential),
                 'Stab': s.get('score', 0),
                 'Price': s.get('price_trend', '—'),
                 'Margin': s.get('margin_trend', '—'),
                 '🔥Agg': s.get('smart_agg', 0),
                 '⚖️Bal': s.get('smart_bal', 0),
                 '🛡️Con': s.get('smart_con', 0),
-                'Profit': s['profit'],
-                'Limit': item_limit
+                'Profit': s['profit']
             })
         df = pd.DataFrame(stable_data)
-        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', '💎Pot', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', '💎Potential', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
         st.dataframe(styled_df)
-        st.caption("💎Pot = Margin% × min(Vol,Limit) | Stab=Stability | Price/Margin=Trends")
+        st.caption("💎Potential = Profit × min(Vol,Limit) | Stab=Stability | Price/Margin=Trends")
     else:
         st.info(f"Building data... tracking {len(history)} items. Keep page open!")
 

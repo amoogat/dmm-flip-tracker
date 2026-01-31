@@ -1226,13 +1226,13 @@ else:
                 'Age': format_age(age),
                 'Fresh': freshness,
                 'Stab': s.get('score', 0),
-                'Price': s.get('price_trend', '-'),
-                'Margin': s.get('margin_trend', '-'),
+                'Price': s.get('price_trend', '—'),
+                'Margin': s.get('margin_trend', '—'),
                 '🔥Agg': s.get('smart_agg', 0),
                 '⚖️Bal': s.get('smart_bal', 0),
                 '🛡️Con': s.get('smart_con', 0),
                 'Profit': s['profit'],
-                'Limit': items.get(s.get('item_id'), {}).get('limit', '-')
+                'Limit': items.get(s.get('item_id'), {}).get('limit', 0)
             })
         df = pd.DataFrame(stable_data)
         st.dataframe(df)
@@ -1262,8 +1262,8 @@ else:
 
             # Get stability/trend data if available
             analysis = analyze_stability(opp['id'], history, items)
-            stab = int(analysis['stability_score']) if analysis else '-'
-            trend = analysis['price_trend'] if analysis else '-'
+            stab = int(analysis['stability_score']) if analysis else 0
+            trend = analysis['price_trend'] if analysis else '—'
 
             opp_data.append({
                 'Item': opp['name'],

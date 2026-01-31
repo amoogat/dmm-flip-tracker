@@ -296,10 +296,45 @@ st.markdown("""
         border-top-color: var(--gold) !important;
     }
 
-    /* === HIDE STREAMLIT BRANDING === */
+    /* === HIDE STREAMLIT BRANDING (keep header for sidebar toggle) === */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+
+    /* === STICKY MENU BAR === */
+    .menu-bar {
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        background: linear-gradient(180deg, #1A1D24 0%, #12151C 100%);
+        border-bottom: 2px solid var(--gold-dark);
+        padding: 0;
+        margin: -1rem -1rem 1rem -1rem;
+        display: flex;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    .menu-tab {
+        flex: 1;
+        padding: 15px 20px;
+        text-align: center;
+        font-family: 'Cinzel', serif;
+        font-size: 1.1rem;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: none;
+        background: transparent;
+        color: var(--text-secondary);
+        border-bottom: 3px solid transparent;
+    }
+    .menu-tab:hover {
+        background: rgba(212, 175, 55, 0.1);
+        color: var(--gold-light);
+    }
+    .menu-tab.active {
+        color: var(--gold);
+        background: rgba(212, 175, 55, 0.15);
+        border-bottom: 3px solid var(--gold);
+    }
 
     /* === CUSTOM SCROLLBAR === */
     ::-webkit-scrollbar {
@@ -1012,29 +1047,51 @@ stable = get_stable_picks(items, history, prices, volumes, capital, filter_stale
 positions = load_positions()
 price_alerts = load_alerts()
 
-# === VIEW SELECTOR (Tab Style) ===
+# === MENU BAR ===
 if 'view' not in st.session_state:
     st.session_state['view'] = 'dashboard'
 
 current_view = st.session_state.get('view', 'dashboard')
+dash_active = "active" if current_view == 'dashboard' else ""
+plan_active = "active" if current_view == 'planner' else ""
 
-# Custom CSS for tab buttons based on active state
-dash_style = "background: linear-gradient(180deg, #D4AF37 0%, #B8860B 100%); color: #1A1D24;" if current_view == 'dashboard' else "background: transparent; color: #A0A0A0; border: 1px solid #B8860B;"
-plan_style = "background: linear-gradient(180deg, #D4AF37 0%, #B8860B 100%); color: #1A1D24;" if current_view == 'planner' else "background: transparent; color: #A0A0A0; border: 1px solid #B8860B;"
+# Render menu bar HTML
+st.markdown(f"""
+<div class="menu-bar">
+    <div class="menu-tab {dash_active}" id="dash-tab">📊 Dashboard</div>
+    <div class="menu-tab {plan_active}" id="plan-tab">📋 Smart Planner</div>
+</div>
+""", unsafe_allow_html=True)
 
-tab1, tab2 = st.columns(2)
-with tab1:
-    st.markdown(f'<div style="text-align:center;padding:10px;border-radius:8px 8px 0 0;{dash_style}font-family:Cinzel,serif;font-weight:600;border-bottom:{"3px solid #D4AF37" if current_view=="dashboard" else "none"};">📊 Dashboard</div>', unsafe_allow_html=True)
-    if st.button("Select Dashboard", key="tab_dash"):
+# Hidden buttons for actual navigation (styled to be minimal)
+st.markdown("""
+<style>
+    div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) {
+        margin-top: -15px;
+        margin-bottom: 10px;
+    }
+    div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) button {
+        background: transparent !important;
+        border: none !important;
+        color: transparent !important;
+        height: 35px;
+        box-shadow: none !important;
+    }
+    div[data-testid="stHorizontalBlock"]:has(button[kind="secondary"]) button:hover {
+        background: rgba(212, 175, 55, 0.1) !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("​", key="tab_dash"):  # Zero-width space
         st.session_state['view'] = 'dashboard'
         rerun()
-with tab2:
-    st.markdown(f'<div style="text-align:center;padding:10px;border-radius:8px 8px 0 0;{plan_style}font-family:Cinzel,serif;font-weight:600;border-bottom:{"3px solid #D4AF37" if current_view=="planner" else "none"};">📋 Smart Planner</div>', unsafe_allow_html=True)
-    if st.button("Select Planner", key="tab_plan"):
+with col2:
+    if st.button("​", key="tab_plan"):  # Zero-width space
         st.session_state['view'] = 'planner'
         rerun()
-
-st.markdown('<hr style="margin-top:-10px;margin-bottom:20px;">', unsafe_allow_html=True)
 
 view = st.session_state.get('view', 'dashboard')
 

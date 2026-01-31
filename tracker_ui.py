@@ -352,13 +352,85 @@ st.markdown("""
         background: var(--gold);
     }
 
-    /* === FADE IN ANIMATION === */
+    /* === FADE IN ANIMATIONS === */
     .main .block-container {
-        animation: fadeIn 0.3s ease-in;
+        animation: fadeSlideIn 0.5s ease-out;
     }
-    @keyframes fadeIn {
-        from { opacity: 0.7; }
-        to { opacity: 1; }
+    @keyframes fadeSlideIn {
+        from {
+            opacity: 0;
+            transform: translateY(10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Staggered fade for metrics */
+    [data-testid="stMetric"] {
+        animation: fadeScale 0.4s ease-out backwards;
+    }
+    [data-testid="stHorizontalBlock"] > div:nth-child(1) [data-testid="stMetric"] { animation-delay: 0.05s; }
+    [data-testid="stHorizontalBlock"] > div:nth-child(2) [data-testid="stMetric"] { animation-delay: 0.1s; }
+    [data-testid="stHorizontalBlock"] > div:nth-child(3) [data-testid="stMetric"] { animation-delay: 0.15s; }
+    [data-testid="stHorizontalBlock"] > div:nth-child(4) [data-testid="stMetric"] { animation-delay: 0.2s; }
+    [data-testid="stHorizontalBlock"] > div:nth-child(5) [data-testid="stMetric"] { animation-delay: 0.25s; }
+
+    @keyframes fadeScale {
+        from {
+            opacity: 0;
+            transform: scale(0.95);
+        }
+        to {
+            opacity: 1;
+            transform: scale(1);
+        }
+    }
+
+    /* Dataframes fade in */
+    [data-testid="stDataFrame"] {
+        animation: fadeSlideUp 0.5s ease-out 0.2s backwards;
+    }
+    @keyframes fadeSlideUp {
+        from {
+            opacity: 0;
+            transform: translateY(20px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    /* Headers glow in */
+    h1, h2, h3, .stSubheader {
+        animation: glowIn 0.6s ease-out;
+    }
+    @keyframes glowIn {
+        from {
+            opacity: 0;
+            text-shadow: 0 0 0 rgba(212, 175, 55, 0);
+        }
+        to {
+            opacity: 1;
+            text-shadow: 0 0 20px rgba(212, 175, 55, 0.3);
+        }
+    }
+
+    /* Menu bar slide down */
+    .menu-bar {
+        animation: slideDown 0.3s ease-out;
+    }
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
 </style>
 """, unsafe_allow_html=True)

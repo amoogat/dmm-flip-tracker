@@ -8,7 +8,16 @@ import requests
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+# Pacific timezone (PST/PDT - handles daylight saving automatically isn't available in stdlib,
+# so we'll use fixed offset; user is in Pacific)
+try:
+    from zoneinfo import ZoneInfo
+    PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+except ImportError:
+    # Fallback for older Python - use fixed offset (PST = UTC-8)
+    PACIFIC_TZ = timezone(timedelta(hours=-8))
 import statistics
 import pandas as pd
 
@@ -86,10 +95,26 @@ def get_breach_info():
 
     countdown = f"{hours_until}h {mins_until}m"
 
+    # Calculate Pacific time for next breach
+    next_breach_utc = now.replace(hour=next_breach, minute=0, second=0, microsecond=0)
+    if next_breach <= current_hour and not (next_breach == current_hour and current_minute == 0):
+        next_breach_utc = next_breach_utc + timedelta(days=1)
+    next_breach_pacific = next_breach_utc.astimezone(PACIFIC_TZ)
+    next_breach_pacific_str = next_breach_pacific.strftime("%I:%M %p").lstrip('0')
+
+    # Current breach Pacific time (if in post-breach)
+    current_breach_pacific_str = None
+    if current_breach is not None:
+        current_breach_utc = now.replace(hour=current_breach, minute=0, second=0, microsecond=0)
+        current_breach_pacific = current_breach_utc.astimezone(PACIFIC_TZ)
+        current_breach_pacific_str = current_breach_pacific.strftime("%I:%M %p").lstrip('0')
+
     return {
         'in_post_breach': in_post_breach,
         'current_breach': current_breach,
+        'current_breach_pacific': current_breach_pacific_str,
         'next_breach': next_breach,
+        'next_breach_pacific': next_breach_pacific_str,
         'countdown': countdown,
         'hours_until': hours_until + (mins_until / 60)
     }
@@ -1221,35 +1246,6 @@ if st.sidebar.button("🔄 Refresh"):
     st.cache.clear()
     rerun()
 
-# === BREACH INFO IN SIDEBAR ===
-breach_info = get_breach_info()
-if breach_info['in_post_breach']:
-    st.sidebar.markdown(f"""
-    <div style="background: #FF4757; padding: 10px; border-radius: 8px; text-align: center; margin: 10px 0;">
-        <strong style="color: white;">⚔️ POST-BREACH ACTIVE</strong><br>
-        <span style="color: #FFE0E0; font-size: 0.9rem;">Flip restocking items now!</span>
-    </div>
-    """, unsafe_allow_html=True)
-else:
-    st.sidebar.markdown(f"""
-    <div style="background: #1A1D24; padding: 8px 12px; border-radius: 6px; border-left: 3px solid #D4AF37; margin: 10px 0;">
-        <span style="color: #A0A0A0;">⚔️ Next Breach:</span>
-        <strong style="color: #D4AF37;"> {breach_info['countdown']}</strong>
-    </div>
-    """, unsafe_allow_html=True)
-
-# Dynamic breach scanner button
-if st.sidebar.button("🔍 Scan Breach Items"):
-    with st.sidebar:
-        with st.spinner("Scanning API for breach patterns..."):
-            scanned = fetch_breach_scanner_data()
-            if scanned:
-                st.success(f"Found {len(scanned)} items with breach boosts!")
-                for item in scanned[:5]:
-                    st.caption(f"• Item {item['item_id']}: +{item['boost']:.1f}% margin boost")
-            else:
-                st.info("No significant breach patterns found")
-
 # === USER NICKNAME (for saving/loading data) ===
 st.sidebar.markdown("---")
 st.sidebar.subheader("👤 Your Profile")
@@ -1897,20 +1893,40 @@ else:
     breach_info = get_breach_info()
 
     if breach_info['in_post_breach']:
-        # We're in a post-breach window - show prominent alert
-        st.markdown(f"""
-        <div style="background: linear-gradient(90deg, #FF4757 0%, #FF6B7A 100%);
-                    padding: 15px 20px; border-radius: 10px; margin: 15px 0;
-                    border: 2px solid #FF4757; text-align: center;">
-            <span style="font-size: 1.5rem; font-weight: bold; color: white;">
-                ⚔️ POST-BREACH MODE ACTIVE ⚔️
-            </span>
-            <br>
-            <span style="color: #FFE0E0; font-size: 1rem;">
-                Breach at {breach_info['current_breach']:02d}:00 UTC ended recently — Margins boosted on restocking items!
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
+        # We're in a post-breach window - show prominent alert with scan button
+        breach_col1, breach_col2 = st.columns([4, 1])
+        with breach_col1:
+            st.markdown(f"""
+            <div style="background: linear-gradient(90deg, #FF4757 0%, #FF6B7A 100%);
+                        padding: 15px 20px; border-radius: 10px; margin: 15px 0;
+                        border: 2px solid #FF4757; text-align: center;">
+                <span style="font-size: 1.5rem; font-weight: bold; color: white;">
+                    ⚔️ POST-BREACH MODE ACTIVE ⚔️
+                </span>
+                <br>
+                <span style="color: #FFE0E0; font-size: 1rem;">
+                    Breach at {breach_info['current_breach_pacific']} PT ended recently — Margins boosted on restocking items!
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+        with breach_col2:
+            st.write("")  # Spacer
+            if st.button("🔍 Scan Items", key="breach_scan_active"):
+                with st.spinner("Scanning..."):
+                    scanned = fetch_breach_scanner_data()
+                    if scanned:
+                        st.session_state['breach_scan_results'] = scanned
+                    else:
+                        st.session_state['breach_scan_results'] = []
+
+        # Show scan results if available
+        if 'breach_scan_results' in st.session_state and st.session_state['breach_scan_results']:
+            scanned = st.session_state['breach_scan_results']
+            st.success(f"Found {len(scanned)} items with breach boosts!")
+            for item in scanned[:5]:
+                # Get item name from items dict
+                item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
+                st.caption(f"• {item_name}: +{item['boost']:.1f}% margin boost")
 
         # Show breach items
         breach_opps = scan_breach_items(prices, volumes, items, item_names)
@@ -1938,7 +1954,7 @@ else:
 
             st.markdown("---")
     else:
-        # Show countdown to next breach
+        # Show countdown to next breach with scan button
         hours_until = breach_info['hours_until']
         if hours_until <= 1:
             urgency_color = "#FF4757"  # Red - imminent
@@ -1950,19 +1966,39 @@ else:
             urgency_color = "#00D26A"  # Green - plenty of time
             urgency_text = ""
 
-        st.markdown(f"""
-        <div style="background: var(--bg-card); padding: 12px 20px; border-radius: 8px;
-                    margin: 10px 0; border-left: 4px solid {urgency_color};
-                    display: flex; justify-content: space-between; align-items: center;">
-            <span style="color: #A0A0A0;">
-                ⚔️ Next Breach: <strong style="color: {urgency_color};">{breach_info['next_breach']:02d}:00 UTC</strong>
-                {f' ({urgency_text})' if urgency_text else ''}
-            </span>
-            <span style="font-size: 1.3rem; font-weight: bold; color: {urgency_color};">
-                {breach_info['countdown']}
-            </span>
-        </div>
-        """, unsafe_allow_html=True)
+        breach_col1, breach_col2 = st.columns([4, 1])
+        with breach_col1:
+            st.markdown(f"""
+            <div style="background: var(--bg-card); padding: 12px 20px; border-radius: 8px;
+                        margin: 10px 0; border-left: 4px solid {urgency_color};
+                        display: flex; justify-content: space-between; align-items: center;">
+                <span style="color: #A0A0A0;">
+                    ⚔️ Next Breach: <strong style="color: {urgency_color};">{breach_info['next_breach_pacific']} PT</strong>
+                    {f' ({urgency_text})' if urgency_text else ''}
+                </span>
+                <span style="font-size: 1.3rem; font-weight: bold; color: {urgency_color};">
+                    {breach_info['countdown']}
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+        with breach_col2:
+            st.write("")  # Spacer
+            if st.button("🔍 Scan Items", key="breach_scan_countdown"):
+                with st.spinner("Scanning..."):
+                    scanned = fetch_breach_scanner_data()
+                    if scanned:
+                        st.session_state['breach_scan_results'] = scanned
+                    else:
+                        st.session_state['breach_scan_results'] = []
+
+        # Show scan results if available
+        if 'breach_scan_results' in st.session_state and st.session_state['breach_scan_results']:
+            scanned = st.session_state['breach_scan_results']
+            st.success(f"Found {len(scanned)} items with breach boosts!")
+            for item in scanned[:5]:
+                # Get item name from items dict
+                item_name = items.get(item['item_id'], {}).get('name', f"Item {item['item_id']}")
+                st.caption(f"• {item_name}: +{item['boost']:.1f}% margin boost")
 
     st.markdown("---")
 

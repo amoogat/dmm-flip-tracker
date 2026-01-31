@@ -727,7 +727,7 @@ def style_dataframe(df, color_cols=None, format_cols=None):
             format_dict[col] = '{:,.0f}'
         elif col in ['Margin %']:
             format_dict[col] = '{:.2f}%'  # Add % symbol
-        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Limit', 'Qty', '#']:
+        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Limit', 'Qty', '#', '💎Pot']:
             format_dict[col] = '{:.0f}'
 
     if format_dict:
@@ -1857,6 +1857,10 @@ else:
             stab = int(analysis['stability_score']) if analysis else 0
             trend = analysis['price_trend'] if analysis else '—'
 
+            # Calculate Potential: margin % * min(vol/hr, limit)
+            effective_vol = min(opp['volume'], opp['limit'])
+            potential = round(opp['margin_pct'] * effective_vol, 0)
+
             opp_data.append({
                 'Item': opp['name'],
                 'Buy': opp['buy'],
@@ -1865,6 +1869,7 @@ else:
                 'Vol/hr': opp['volume'],
                 'Age': format_age(age),
                 'Fresh': freshness,
+                '💎Pot': int(potential),
                 'Stab': stab,
                 'Trend': trend,
                 '🔥Agg': opp['smart_agg'],
@@ -1874,9 +1879,9 @@ else:
                 'Limit': opp['limit']
             })
         df = pd.DataFrame(opp_data)
-        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', '💎Pot', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
         st.dataframe(styled_df)
-        st.caption("Stab=Stability | Trend=Price direction | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
+        st.caption("💎Pot = Margin% × min(Vol,Limit) | Stab=Stability | 🔥Agg | ⚖️Bal | 🛡️Con")
     else:
         st.info("No opportunities with current filters")
 
@@ -1900,6 +1905,11 @@ else:
             else:
                 freshness = "🔴"
 
+            # Calculate Potential: margin % * min(vol/hr, limit)
+            item_limit = items.get(s.get('item_id'), {}).get('limit', 1)
+            effective_vol = min(s.get('volume', 0), item_limit)
+            potential = round(s['margin_pct'] * effective_vol, 0)
+
             stable_data.append({
                 'Item': s['name'],
                 'Buy': s['buy'],
@@ -1908,6 +1918,7 @@ else:
                 'Vol/hr': s.get('volume', 0),
                 'Age': format_age(age),
                 'Fresh': freshness,
+                '💎Pot': int(potential),
                 'Stab': s.get('score', 0),
                 'Price': s.get('price_trend', '—'),
                 'Margin': s.get('margin_trend', '—'),
@@ -1915,12 +1926,12 @@ else:
                 '⚖️Bal': s.get('smart_bal', 0),
                 '🛡️Con': s.get('smart_con', 0),
                 'Profit': s['profit'],
-                'Limit': items.get(s.get('item_id'), {}).get('limit', 0)
+                'Limit': item_limit
             })
         df = pd.DataFrame(stable_data)
-        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', '💎Pot', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
         st.dataframe(styled_df)
-        st.caption("Stab=Stability Score | Price/Margin=Trends | 🔥Agg | ⚖️Bal | 🛡️Con - Click headers to sort!")
+        st.caption("💎Pot = Margin% × min(Vol,Limit) | Stab=Stability | Price/Margin=Trends")
     else:
         st.info(f"Building data... tracking {len(history)} items. Keep page open!")
 

@@ -439,12 +439,12 @@ def fetch_items():
         names[item['name'].lower()] = item['id']
     return items, names
 
-@st.cache(ttl=120, allow_output_mutation=True)
+@st.cache(ttl=30, allow_output_mutation=True)
 def fetch_prices():
     resp = requests.get(f"{API_BASE}/latest", headers=HEADERS)
     return resp.json()['data']
 
-@st.cache(ttl=120, allow_output_mutation=True)
+@st.cache(ttl=30, allow_output_mutation=True)
 def fetch_volumes():
     resp = requests.get(f"{API_BASE}/1h", headers=HEADERS)
     return resp.json()['data']

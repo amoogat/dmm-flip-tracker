@@ -1306,12 +1306,12 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
             filter_stats['stale_prices'] += 1
             filter_reasons.append(f"⏰ Stale ({age//60}m old)")
 
-        spread_ratio = high / low if low > 0 else 999
+        spread_ratio = high / low if low and low > 0 else 999
         if spread_ratio > 2.0:  # Match regular opportunities threshold
             filter_stats['bad_spread'] += 1
             filter_reasons.append(f"📊 Wide spread ({spread_ratio:.1f}x)")
 
-        if high > capital:
+        if high and high > capital:
             filter_stats['cant_afford'] += 1
             filter_reasons.append(f"💰 Can't afford ({high:,} > {capital:,})")
 
@@ -1323,7 +1323,7 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
             filter_reasons.append("📉 No volume")
 
         margin = high - low - int(high * 0.01) if high and low else 0
-        margin_pct = (margin / low * 100) if low > 0 else 0
+        margin_pct = (margin / low * 100) if low and low > 0 else 0
 
         if margin_pct < min_margin and not filter_reasons:
             filter_stats['low_margin'] += 1

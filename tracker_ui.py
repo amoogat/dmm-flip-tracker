@@ -1309,11 +1309,20 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
             continue
 
         item = items[item_id]
-        high, low = p.get('high'), p.get('low')
+        api_high, api_low = p.get('high'), p.get('low')
         high_time, low_time = p.get('highTime'), p.get('lowTime')
 
-        # Skip items below threshold
-        if not high or high < price_threshold:
+        # Handle inverted prices (API sometimes has high < low)
+        # For flipping: buy at lower price, sell at higher price
+        if api_high and api_low:
+            high = max(api_high, api_low)  # Sell price
+            low = min(api_high, api_low)   # Buy price
+        else:
+            high, low = api_high, api_low
+
+        # Skip items below threshold (use max price)
+        max_price = max(api_high or 0, api_low or 0)
+        if not max_price or max_price < price_threshold:
             continue
 
         filter_stats['total_above_threshold'] += 1
@@ -1322,7 +1331,7 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
         # High ticket items trade infrequently, so we accept older data
         filter_reasons = []
 
-        if not all([high, low, high_time, low_time]) or high <= low:
+        if not all([high, low, high_time, low_time]):
             filter_stats['no_valid_prices'] += 1
             filter_reasons.append("❌ No valid price data")
 
@@ -2609,20 +2618,27 @@ else:
                 st.markdown(f"### {item_info.get('name', search_item)}")
 
                 if price_data:
-                    high = price_data.get('high', 0)
-                    low = price_data.get('low', 0)
+                    api_high = price_data.get('high', 0)
+                    api_low = price_data.get('low', 0)
                     high_time = price_data.get('highTime', 0)
                     low_time = price_data.get('lowTime', 0)
                     now = int(time.time())
                     age = max(now - high_time, now - low_time) if high_time and low_time else 9999
 
+                    # For FLIPPING: you BUY at low price, SELL at high price
+                    # API can sometimes have inverted data, so use min/max
+                    buy_price = min(api_high, api_low) if api_high and api_low else 0
+                    sell_price = max(api_high, api_low) if api_high and api_low else 0
+
                     vol = (vol_data.get('highPriceVolume', 0) or 0) + (vol_data.get('lowPriceVolume', 0) or 0)
-                    margin = high - low - int(high * 0.01) if high and low else 0
-                    margin_pct = (margin / low * 100) if low else 0
+
+                    # Margin = sell - buy - 1% tax (on sell price)
+                    margin = sell_price - buy_price - int(sell_price * 0.01) if buy_price and sell_price else 0
+                    margin_pct = (margin / buy_price * 100) if buy_price else 0
 
                     col1, col2, col3 = st.columns(3)
-                    col1.metric("Buy Price", f"{high:,}" if high else "N/A")
-                    col2.metric("Sell Price", f"{low:,}" if low else "N/A")
+                    col1.metric("Buy At", f"{buy_price:,}" if buy_price else "N/A")
+                    col2.metric("Sell At", f"{sell_price:,}" if sell_price else "N/A")
                     col3.metric("Margin", f"{margin_pct:.1f}%" if margin_pct else "N/A")
 
                     col4, col5, col6 = st.columns(3)
@@ -2638,15 +2654,16 @@ else:
                     # Show WHY it's not in high ticket
                     st.markdown("**Why not showing in High Ticket:**")
                     reasons = []
-                    if high and high < price_threshold:
-                        reasons.append(f"❌ Price ({high:,}) below threshold ({price_threshold:,})")
+                    max_price = max(api_high, api_low) if api_high and api_low else 0
+                    if max_price and max_price < price_threshold:
+                        reasons.append(f"❌ Price ({max_price:,}) below threshold ({price_threshold:,})")
                     if age > 86400:
                         reasons.append(f"❌ Too stale ({age//3600}h old, max 24h)")
-                    if high and high > capital:
-                        reasons.append(f"❌ Can't afford ({high:,} > {capital:,})")
+                    if buy_price and buy_price > capital:
+                        reasons.append(f"❌ Can't afford ({buy_price:,} > {capital:,})")
                     if margin_pct < 2:
                         reasons.append(f"❌ Low margin ({margin_pct:.1f}%, min 2%)")
-                    spread = high / low if low else 999
+                    spread = sell_price / buy_price if buy_price else 999
                     if spread > 2.5:
                         reasons.append(f"❌ Wide spread ({spread:.1f}x, max 2.5x)")
 

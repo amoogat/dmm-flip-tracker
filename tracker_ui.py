@@ -3338,23 +3338,19 @@ else:
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")
 
 # === AUTO-REFRESH ===
-if auto_refresh or live_monitor:
+if auto_refresh and refresh_interval > 0:
     # Try streamlit-autorefresh for smooth updates (no page flash)
-    # Falls back to meta refresh if not installed
-    smooth_refresh = False
     try:
         from streamlit_autorefresh import st_autorefresh
         count = st_autorefresh(interval=refresh_interval * 1000, limit=None, key="auto_refresher")
-        smooth_refresh = True
-        if live_monitor:
-            st.caption(f"🔴 LIVE MONITOR: Smooth refresh #{count} every {refresh_interval}s")
+        if refresh_interval == 10:
+            st.caption(f"🔴 LIVE MODE: Smooth refresh #{count} every {refresh_interval}s ✨")
         else:
-            st.caption(f"🔄 Smooth refresh #{count} every {refresh_interval}s")
-    except ImportError:
+            st.caption(f"🔄 Smooth refresh #{count} every {refresh_interval}s ✨")
+    except ImportError as e:
         # Fallback: meta refresh (works but page flashes)
         st.markdown(f'<meta http-equiv="refresh" content="{refresh_interval}">', unsafe_allow_html=True)
-        if live_monitor:
-            st.caption(f"🔴 LIVE MONITOR: Refreshing every {refresh_interval}s")
-        else:
-            st.caption(f"🔄 Refreshing every {refresh_interval}s")
-        st.info("💡 **Want smoother refreshes?** Run: `pip install streamlit-autorefresh`")
+        st.caption(f"🔄 Refreshing every {refresh_interval}s (install streamlit-autorefresh for smoother updates)")
+    except Exception as e:
+        st.error(f"Auto-refresh error: {e}")
+        st.markdown(f'<meta http-equiv="refresh" content="{refresh_interval}">', unsafe_allow_html=True)

@@ -829,6 +829,13 @@ def load_settings():
                     st.session_state['filter_stale'] = settings.get('filter_stale', True)
                 if 'filter_low_vol' not in st.session_state:
                     st.session_state['filter_low_vol'] = settings.get('filter_low_vol', True)
+                # Load refresh settings (persist across page refreshes!)
+                if 'auto_refresh_on' not in st.session_state:
+                    st.session_state['auto_refresh_on'] = settings.get('auto_refresh_on', True)
+                if 'refresh_secs' not in st.session_state:
+                    st.session_state['refresh_secs'] = settings.get('refresh_secs', 60)
+                if 'live_monitor' not in st.session_state:
+                    st.session_state['live_monitor'] = settings.get('live_monitor', False)
         except:
             pass
     return {
@@ -837,10 +844,13 @@ def load_settings():
         'min_margin': st.session_state.get('min_margin', 3),
         'max_margin': st.session_state.get('max_margin', 30),
         'filter_stale': st.session_state.get('filter_stale', True),
-        'filter_low_vol': st.session_state.get('filter_low_vol', True)
+        'filter_low_vol': st.session_state.get('filter_low_vol', True),
+        'auto_refresh_on': st.session_state.get('auto_refresh_on', True),
+        'refresh_secs': st.session_state.get('refresh_secs', 60),
+        'live_monitor': st.session_state.get('live_monitor', False)
     }
 
-def save_settings(capital=None, nickname=None, min_margin=None, max_margin=None, filter_stale=None, filter_low_vol=None):
+def save_settings(capital=None, nickname=None, min_margin=None, max_margin=None, filter_stale=None, filter_low_vol=None, auto_refresh_on=None, refresh_secs=None, live_monitor=None):
     """Save user settings to persistent file"""
     if capital is not None:
         st.session_state['capital'] = capital
@@ -854,6 +864,12 @@ def save_settings(capital=None, nickname=None, min_margin=None, max_margin=None,
         st.session_state['filter_stale'] = filter_stale
     if filter_low_vol is not None:
         st.session_state['filter_low_vol'] = filter_low_vol
+    if auto_refresh_on is not None:
+        st.session_state['auto_refresh_on'] = auto_refresh_on
+    if refresh_secs is not None:
+        st.session_state['refresh_secs'] = refresh_secs
+    if live_monitor is not None:
+        st.session_state['live_monitor'] = live_monitor
 
     settings = {
         'capital': st.session_state.get('capital', 50000),
@@ -861,7 +877,10 @@ def save_settings(capital=None, nickname=None, min_margin=None, max_margin=None,
         'min_margin': st.session_state.get('min_margin', 3),
         'max_margin': st.session_state.get('max_margin', 30),
         'filter_stale': st.session_state.get('filter_stale', True),
-        'filter_low_vol': st.session_state.get('filter_low_vol', True)
+        'filter_low_vol': st.session_state.get('filter_low_vol', True),
+        'auto_refresh_on': st.session_state.get('auto_refresh_on', True),
+        'refresh_secs': st.session_state.get('refresh_secs', 60),
+        'live_monitor': st.session_state.get('live_monitor', False)
     }
     try:
         with open(SETTINGS_FILE, 'w') as f:
@@ -1125,7 +1144,9 @@ def find_opportunities(items, prices, volumes, capital, min_margin=3, max_margin
             continue
 
         vol = volumes.get(item_id_str, {})
-        total_vol = (vol.get('highPriceVolume', 0) or 0) + (vol.get('lowPriceVolume', 0) or 0)
+        buy_vol = vol.get('highPriceVolume', 0) or 0  # Buy side volume
+        sell_vol = vol.get('lowPriceVolume', 0) or 0   # Sell side volume
+        total_vol = buy_vol + sell_vol
         if total_vol < 10:
             continue
 
@@ -1154,11 +1175,66 @@ def find_opportunities(items, prices, volumes, capital, min_margin=3, max_margin
         balanced = int(profit_score * 0.33 + vol_score * 0.33 + fresh_score * 0.34)
         conservative = int(fresh_score * 0.4 + vol_score * 0.4 + profit_score * 0.2)
 
+        # === FULL DATA SUPERSET ===
+        gp_per_flip = margin * max_qty
+        gp_per_limit = margin * item['limit']
+        capital_locked = low * max_qty
+
+        # Volume estimates (extrapolated from 1hr data)
+        vol_2hr = total_vol * 2
+        vol_4hr = total_vol * 4
+
+        # GP/hr calculation (assuming we can flip continuously)
+        # Realistic: we can capture ~7% of volume, capped by limit/4 per hour
+        flips_per_hr = min(total_vol * 0.07, item['limit'] / 4)
+        gp_per_hr = int(margin * flips_per_hr)
+        gp_per_day = gp_per_hr * 24
+
+        # ROI calculation
+        roi_pct = (margin / low * 100) if low > 0 else 0
+
+        # Strategy based on volume
+        if total_vol >= 100:
+            strategy = "⚡ Active"
+        elif total_vol >= 30:
+            strategy = "📊 Moderate"
+        else:
+            strategy = "🐌 Passive"
+
+        # Risk indicator
+        if spread_ratio > 1.5:
+            risk = "🔴 High"
+        elif spread_ratio > 1.2 or margin_pct > 20:
+            risk = "🟡 Med"
+        else:
+            risk = "🟢 Low"
+
         opps.append({
-            'id': item_id, 'name': item['name'], 'buy': high, 'sell': low,
-            'margin': margin, 'margin_pct': margin_pct, 'volume': total_vol,
-            'profit': margin * max_qty, 'qty': max_qty, 'age': age, 'limit': item['limit'],
-            'smart_agg': aggressive, 'smart_bal': balanced, 'smart_con': conservative
+            'id': item_id,
+            'name': item['name'],
+            'buy': low,           # BUY at low price
+            'sell': high,         # SELL at high price
+            'margin': margin,
+            'margin_pct': margin_pct,
+            'volume': total_vol,
+            'buy_vol': buy_vol,
+            'sell_vol': sell_vol,
+            'vol_2hr': vol_2hr,
+            'vol_4hr': vol_4hr,
+            'profit': gp_per_flip,
+            'gp_per_hr': gp_per_hr,
+            'gp_per_day': gp_per_day,
+            'gp_per_limit': gp_per_limit,
+            'roi_pct': round(roi_pct, 1),
+            'qty': max_qty,
+            'limit': item['limit'],
+            'capital_locked': capital_locked,
+            'age': age,
+            'strategy': strategy,
+            'risk': risk,
+            'smart_agg': aggressive,
+            'smart_bal': balanced,
+            'smart_con': conservative
         })
 
     opps.sort(key=lambda x: x['smart_agg'], reverse=True)  # Default sort by aggressive 🔥
@@ -1239,16 +1315,72 @@ def get_stable_picks(items, history, prices, volumes, capital, filter_stale=True
         # Conservative: stability > fresh > volume > profit
         conservative = stability_score * 0.4 + fresh_score * 0.3 + vol_score * 0.2 + profit_score * 0.1
 
+        # === FULL DATA SUPERSET (same as find_opportunities) ===
+        buy_vol = vol_data.get('highPriceVolume', 0) or 0
+        sell_vol = vol_data.get('lowPriceVolume', 0) or 0
+        vol_2hr = vol * 2
+        vol_4hr = vol * 4
+
+        gp_per_flip = margin * max_qty
+        gp_per_limit = margin * items[item_id]['limit']
+        capital_locked = low * max_qty
+
+        # GP/hr calculation
+        flips_per_hr = min(vol * 0.07, items[item_id]['limit'] / 4)
+        gp_per_hr = int(margin * flips_per_hr)
+        gp_per_day = gp_per_hr * 24
+
+        # ROI calculation
+        roi_pct = (margin / low * 100) if low > 0 else 0
+
+        # Strategy based on volume
+        if vol >= 100:
+            strategy = "⚡ Active"
+        elif vol >= 30:
+            strategy = "📊 Moderate"
+        else:
+            strategy = "🐌 Passive"
+
+        # Risk indicator (using spread ratio)
+        spread_ratio = high / low if low > 0 else 999
+        if spread_ratio > 1.5:
+            risk = "🔴 High"
+        elif spread_ratio > 1.2 or live_margin_pct > 20:
+            risk = "🟡 Med"
+        else:
+            risk = "🟢 Low"
+
         stable.append({
+            'id': item_id,
             'name': items[item_id]['name'],
             'item_id': item_id,
-            'buy': low, 'sell': high,  # buy at low, sell at high
-            'avg_buy': a['avg_buy'], 'avg_sell': a['avg_sell'],
-            'margin_pct': live_margin_pct, 'avg_margin': a['avg_margin'],
-            'margin_trend': a['margin_trend'], 'price_trend': a['price_trend'],
-            'score': a['stability_score'], 'samples': a['samples'],
-            'profit': margin * max_qty, 'qty': max_qty,
-            'age': age, 'volume': vol,
+            'buy': low,           # BUY at low price
+            'sell': high,         # SELL at high price
+            'margin': margin,
+            'margin_pct': live_margin_pct,
+            'avg_buy': a['avg_buy'],
+            'avg_sell': a['avg_sell'],
+            'avg_margin': a['avg_margin'],
+            'volume': vol,
+            'buy_vol': buy_vol,
+            'sell_vol': sell_vol,
+            'vol_2hr': vol_2hr,
+            'vol_4hr': vol_4hr,
+            'profit': gp_per_flip,
+            'gp_per_hr': gp_per_hr,
+            'gp_per_day': gp_per_day,
+            'gp_per_limit': gp_per_limit,
+            'roi_pct': round(roi_pct, 1),
+            'qty': max_qty,
+            'limit': items[item_id]['limit'],
+            'capital_locked': capital_locked,
+            'age': age,
+            'strategy': strategy,
+            'risk': risk,
+            'margin_trend': a['margin_trend'],
+            'price_trend': a['price_trend'],
+            'score': a['stability_score'],
+            'samples': a['samples'],
             'smart_agg': int(aggressive),
             'smart_bal': int(balanced),
             'smart_con': int(conservative)
@@ -1504,26 +1636,58 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
         else:
             last_traded = f"{age//3600}h ago"
 
+        # === FULL DATA SUPERSET (matching find_opportunities) ===
+        buy_vol = vol.get('highPriceVolume', 0) or 0
+        sell_vol = vol.get('lowPriceVolume', 0) or 0
+        vol_2hr = hourly_vol * 2
+        vol_4hr = hourly_vol * 4
+
+        gp_per_limit = margin * item['limit']
+
+        # Strategy based on volume
+        if hourly_vol >= 10:
+            strategy = "⚡ Active"
+        elif hourly_vol >= 1:
+            strategy = "📊 Moderate"
+        else:
+            strategy = "🐌 Passive"
+
+        # Smart scores (same formulas as find_opportunities)
+        vol_score_raw = math.log10(max(hourly_vol, 0.1)) * 25
+        profit_score_raw = min(50, profit_per_cycle / 100)
+        aggressive = int(profit_score_raw * 0.5 + vol_score_raw * 0.3 + fresh_score * 0.2 / 100 * 50)
+        balanced = int(profit_score_raw * 0.33 + vol_score_raw * 0.33 + fresh_score * 0.34 / 100 * 50)
+        conservative = int(fresh_score * 0.4 / 100 * 50 + vol_score_raw * 0.4 + profit_score_raw * 0.2)
+
         high_ticket.append({
             'id': item_id,
             'name': item['name'],
-            'buy': high,
-            'sell': low,
+            'buy': low,           # BUY at low price (corrected!)
+            'sell': high,         # SELL at high price (corrected!)
             'margin': margin,
             'margin_pct': margin_pct,
             'volume': hourly_vol,
+            'buy_vol': buy_vol,
+            'sell_vol': sell_vol,
+            'vol_2hr': vol_2hr,
+            'vol_4hr': vol_4hr,
             'daily_vol': daily_vol,
             'vol_display': vol_display,
             'profit': profit_per_cycle,
+            'gp_per_hr': int(gp_per_hour),
             'gp_per_day': int(gp_per_day),
-            'qty': max_qty,
-            'age': age,
-            'limit': item['limit'],
-            'gp_per_hour': int(gp_per_hour),
+            'gp_per_limit': gp_per_limit,
             'roi_pct': round(roi_pct, 1),
+            'qty': max_qty,
+            'limit': item['limit'],
             'capital_locked': capital_locked,
-            'flip_score': flip_score,
+            'age': age,
+            'strategy': strategy,
             'risk': risk_indicator,
+            'flip_score': flip_score,
+            'smart_agg': aggressive,
+            'smart_bal': balanced,
+            'smart_con': conservative,
             'last_traded': last_traded
         })
 
@@ -1751,36 +1915,39 @@ if filter_low_vol != saved_settings['filter_low_vol']:
 st.sidebar.caption("Settings auto-save and persist across refreshes!")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🔄 Auto-Refresh")
+st.sidebar.subheader("🔄 Refresh Settings")
+st.sidebar.caption("These settings PERSIST across page refreshes!")
 
-# Initialize defaults in session_state (use widget keys directly)
-if 'auto_refresh_on' not in st.session_state:
-    st.session_state['auto_refresh_on'] = True  # Default ON
+# === MAIN AUTO-REFRESH (for full page data) ===
+st.sidebar.markdown("**📊 Data Refresh** (full page)")
+auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=saved_settings['auto_refresh_on'])
+if auto_refresh != saved_settings['auto_refresh_on']:
+    save_settings(auto_refresh_on=auto_refresh)
 
-if 'refresh_secs' not in st.session_state:
-    st.session_state['refresh_secs'] = 60
+interval_options = [30, 60, 120, 300]
+current_interval = saved_settings['refresh_secs']
+interval_idx = interval_options.index(current_interval) if current_interval in interval_options else 1
+data_refresh_interval = st.sidebar.selectbox("Data refresh", interval_options, index=interval_idx, format_func=lambda x: f"{x} seconds")
+if data_refresh_interval != saved_settings['refresh_secs']:
+    save_settings(refresh_secs=data_refresh_interval)
 
-if 'live_monitor' not in st.session_state:
-    st.session_state['live_monitor'] = False
+st.sidebar.markdown("---")
 
-# Auto-refresh options
-auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=st.session_state['auto_refresh_on'])
-st.session_state['auto_refresh_on'] = auto_refresh
-
-# Live Monitor Mode - fast refresh for price alerts
-live_monitor = st.sidebar.checkbox("🔴 LIVE Monitor (10s)", value=st.session_state['live_monitor'],
-                                    help="Fast refresh for watching price alerts")
-st.session_state['live_monitor'] = live_monitor
+# === LIVE ALERT MONITOR (separate from data refresh) ===
+st.sidebar.markdown("**🔔 Price Alert Monitor** (separate)")
+live_monitor = st.sidebar.checkbox("🔴 LIVE Monitor (10s)", value=saved_settings['live_monitor'],
+                                    help="Fast 10s refresh JUST for price alerts - runs separately!")
+if live_monitor != saved_settings['live_monitor']:
+    save_settings(live_monitor=live_monitor)
 
 if live_monitor:
-    refresh_interval = 10  # Fast refresh when monitoring
-    st.sidebar.success("⚡ Live mode: 10s refresh")
+    st.sidebar.success("⚡ LIVE MODE ON")
+    st.sidebar.caption("Checking alerts every 10 seconds!")
+    # When live monitor is ON, use 10s refresh
+    refresh_interval = 10
 else:
-    interval_options = [30, 60, 120, 300]
-    current_interval = st.session_state['refresh_secs']
-    interval_idx = interval_options.index(current_interval) if current_interval in interval_options else 1
-    refresh_interval = st.sidebar.selectbox("Refresh every", interval_options, index=interval_idx, format_func=lambda x: f"{x} seconds")
-    st.session_state['refresh_secs'] = refresh_interval
+    # When live monitor is OFF, use the user's data refresh setting
+    refresh_interval = data_refresh_interval if auto_refresh else 0
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ Add GE Offer")
@@ -2652,7 +2819,6 @@ else:
 
         # Check for triggered alerts first
         triggered_alerts = []
-        alert_data = []
 
         for i, alert in enumerate(price_alerts):
             item_id = alert.get('item_id')
@@ -2661,95 +2827,138 @@ else:
             curr_low = p.get('low', 0)
             enabled = alert.get('enabled', True)
 
-            # Check if alert is triggered
-            is_triggered = False
-            trigger_msg = ""
-
             if enabled:
                 if alert.get('high_above') and curr_high and curr_high >= alert['high_above']:
-                    is_triggered = True
-                    trigger_msg = f"🚨 HIGH HIT! {curr_high:,} ≥ {alert['high_above']:,}"
+                    triggered_alerts.append(f"**{alert['item']}**: 🚨 HIGH HIT! {curr_high:,} ≥ {alert['high_above']:,}")
                 if alert.get('high_below') and curr_high and curr_high <= alert['high_below']:
-                    is_triggered = True
-                    trigger_msg = f"🚨 HIGH HIT! {curr_high:,} ≤ {alert['high_below']:,}"
+                    triggered_alerts.append(f"**{alert['item']}**: 🚨 HIGH HIT! {curr_high:,} ≤ {alert['high_below']:,}")
                 if alert.get('low_above') and curr_low and curr_low >= alert['low_above']:
-                    is_triggered = True
-                    trigger_msg = f"🚨 LOW HIT! {curr_low:,} ≥ {alert['low_above']:,}"
+                    triggered_alerts.append(f"**{alert['item']}**: 🚨 LOW HIT! {curr_low:,} ≥ {alert['low_above']:,}")
                 if alert.get('low_below') and curr_low and curr_low <= alert['low_below']:
-                    is_triggered = True
-                    trigger_msg = f"🚨 LOW HIT! {curr_low:,} ≤ {alert['low_below']:,}"
+                    triggered_alerts.append(f"**{alert['item']}**: 🚨 LOW HIT! {curr_low:,} ≤ {alert['low_below']:,}")
 
-            if is_triggered:
-                triggered_alerts.append(f"**{alert['item']}**: {trigger_msg}")
-
-            # Build condition display
-            conditions = []
-            if alert.get('high_above'):
-                met = "✅" if curr_high and curr_high >= alert['high_above'] else "⏳"
-                conditions.append(f"{met} High ≥ {alert['high_above']:,}")
-            if alert.get('high_below'):
-                met = "✅" if curr_high and curr_high <= alert['high_below'] else "⏳"
-                conditions.append(f"{met} High ≤ {alert['high_below']:,}")
-            if alert.get('low_above'):
-                met = "✅" if curr_low and curr_low >= alert['low_above'] else "⏳"
-                conditions.append(f"{met} Low ≥ {alert['low_above']:,}")
-            if alert.get('low_below'):
-                met = "✅" if curr_low and curr_low <= alert['low_below'] else "⏳"
-                conditions.append(f"{met} Low ≤ {alert['low_below']:,}")
-
-            status = "🚨 TRIGGERED!" if is_triggered else ("✅ Watching" if enabled else "❌ OFF")
-
-            alert_data.append({
-                '#': i + 1,
-                'Item': alert['item'],
-                'Target': ', '.join(conditions),
-                'Now High': curr_high,
-                'Now Low': curr_low,
-                'Status': status
-            })
-
-        # Show triggered alerts prominently
+        # Show triggered alerts prominently with sound
         if triggered_alerts:
             st.error("### 🚨 ALERTS TRIGGERED!")
             for ta in triggered_alerts:
                 st.warning(ta)
-            # Add sound alert via HTML (plays a beep)
-            st.markdown('''
-                <script>
-                    var audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQAHQbHc9axdAAByxuz/1lYAAE27+f/oXAAAO8D+/+5hAAAquf3/62QAAB21+//pZQAAFLL5/+dlAAAOsPj/5mUAAAmt9//lZQAABqz2/+VlAAADq/X/5GUAAAGp9P/kZQAAAKj0/+NlAAD/pvP/42UAAP+l8//jZQAA/6Tz/+NlAAD/o/L/4mUAAP6i8v/iZQAA/qHy/+JlAAD+ofH/4mU=');
-                    audio.play();
-                </script>
-            ''', unsafe_allow_html=True)
+            st.markdown('''<script>var audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQAHQbHc9axdAAByxuz/1lYAAE27+f/oXAAAO8D+/+5hAAAquf3/62QAAB21+//pZQAAFLL5/+dlAAAOsPj/5mUAAAmt9//lZQAABqz2/+VlAAADq/X/5GUAAAGp9P/kZQAAAKj0/+NlAAD/pvP/42UAAP+l8//jZQAA/6Tz/+NlAAD/o/L/4mUAAP6i8v/iZQAA/qHy/+JlAAD+ofH/4mU=');audio.play();</script>''', unsafe_allow_html=True)
 
-        df = pd.DataFrame(alert_data)
-        st.dataframe(df, use_container_width=True)
+        # === BEAUTIFUL INTEGRATED ALERTS TABLE ===
+        # Custom CSS for compact, beautiful alert rows
+        st.markdown("""
+        <style>
+        .alert-row {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            margin: 4px 0;
+            border-radius: 8px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border-left: 4px solid #D4AF37;
+        }
+        .alert-row.triggered {
+            border-left-color: #FF4757;
+            background: linear-gradient(135deg, #2d1f1f 0%, #1a1a2e 100%);
+            animation: pulse 1s infinite;
+        }
+        .alert-row.disabled {
+            opacity: 0.5;
+            border-left-color: #666;
+        }
+        @keyframes pulse {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(255, 71, 87, 0.4); }
+            50% { box-shadow: 0 0 10px 5px rgba(255, 71, 87, 0.2); }
+        }
+        .alert-item { font-weight: 600; color: #D4AF37; min-width: 150px; }
+        .alert-target { color: #A0A0A0; font-size: 0.9em; flex: 1; }
+        .alert-current { color: #00D26A; min-width: 100px; text-align: center; }
+        .alert-status { min-width: 80px; text-align: center; font-weight: 600; }
+        </style>
+        """, unsafe_allow_html=True)
 
-        # Toggle and delete buttons
-        st.write("Toggle/Delete alerts:")
-        cols = st.columns(min(len(price_alerts) * 2, 16))
-        col_idx = 0
-        for i, alert in enumerate(price_alerts[:8]):
+        # Header row
+        header_cols = st.columns([3, 4, 2, 2, 1, 1])
+        header_cols[0].markdown("**Item**")
+        header_cols[1].markdown("**Target**")
+        header_cols[2].markdown("**High**")
+        header_cols[3].markdown("**Low**")
+        header_cols[4].markdown("**🔔**")
+        header_cols[5].markdown("**❌**")
+
+        # Each alert as a row with integrated buttons
+        for i, alert in enumerate(price_alerts):
+            item_id = alert.get('item_id')
+            p = prices.get(str(item_id), {}) if item_id else {}
+            curr_high = p.get('high', 0)
+            curr_low = p.get('low', 0)
             enabled = alert.get('enabled', True)
-            # Toggle button
-            if cols[col_idx].button(f"{'🔇' if enabled else '🔔'}{i+1}", key=f"tog{i}"):
+
+            # Check if triggered
+            is_triggered = False
+            if enabled:
+                if alert.get('high_above') and curr_high and curr_high >= alert['high_above']:
+                    is_triggered = True
+                if alert.get('high_below') and curr_high and curr_high <= alert['high_below']:
+                    is_triggered = True
+                if alert.get('low_above') and curr_low and curr_low >= alert['low_above']:
+                    is_triggered = True
+                if alert.get('low_below') and curr_low and curr_low <= alert['low_below']:
+                    is_triggered = True
+
+            # Build target string
+            targets = []
+            if alert.get('high_above'):
+                check = "✅" if curr_high and curr_high >= alert['high_above'] else "⏳"
+                targets.append(f"{check}H≥{alert['high_above']:,}")
+            if alert.get('high_below'):
+                check = "✅" if curr_high and curr_high <= alert['high_below'] else "⏳"
+                targets.append(f"{check}H≤{alert['high_below']:,}")
+            if alert.get('low_above'):
+                check = "✅" if curr_low and curr_low >= alert['low_above'] else "⏳"
+                targets.append(f"{check}L≥{alert['low_above']:,}")
+            if alert.get('low_below'):
+                check = "✅" if curr_low and curr_low <= alert['low_below'] else "⏳"
+                targets.append(f"{check}L≤{alert['low_below']:,}")
+
+            target_str = " ".join(targets)
+
+            # Row with styling based on status
+            row_style = "🚨" if is_triggered else ("🟢" if enabled else "⚫")
+            cols = st.columns([3, 4, 2, 2, 1, 1])
+
+            # Item name with status indicator
+            cols[0].markdown(f"{row_style} **{alert['item'][:20]}**")
+
+            # Target conditions
+            cols[1].markdown(f"`{target_str}`")
+
+            # Current prices (color coded)
+            high_color = "🟢" if is_triggered and 'high' in str(targets) else ""
+            low_color = "🟢" if is_triggered and 'low' in str(targets).lower() else ""
+            cols[2].markdown(f"{high_color}{curr_high:,}")
+            cols[3].markdown(f"{low_color}{curr_low:,}")
+
+            # Toggle button (small)
+            toggle_label = "🔇" if enabled else "🔔"
+            if cols[4].button(toggle_label, key=f"tog_{i}", help="Toggle alert"):
                 price_alerts[i]['enabled'] = not enabled
                 save_alerts(price_alerts)
                 rerun()
-            col_idx += 1
-            # Delete button
-            if cols[col_idx].button(f"❌{i+1}", key=f"del{i}"):
+
+            # Delete button (small)
+            if cols[5].button("🗑️", key=f"del_{i}", help="Delete alert"):
                 price_alerts.pop(i)
                 save_alerts(price_alerts)
                 rerun()
-            col_idx += 1
 
-        st.caption("🔔 = Enable | 🔇 = Disable | ❌ = Delete")
+        st.caption("🟢=Active | 🚨=Triggered | ⚫=Disabled | 🔇=Mute | 🔔=Enable | 🗑️=Delete")
         st.markdown("---")
 
     # === SECTION: TOP OPPORTUNITIES (First!) ===
     st.subheader("🔥 Top Opportunities")
     if opps:
-        st.caption("Live prices • Sorted by 🔥Aggressive • Click column headers to re-sort!")
+        st.caption("Live prices • FULL DATA SUPERSET • Sorted by 🔥Aggressive • Click column headers to re-sort!")
 
         opp_data = []
         for opp in opps:
@@ -2767,38 +2976,48 @@ else:
             # Get stability/trend data if available
             analysis = analyze_stability(opp['id'], history, items)
             stab = int(analysis['stability_score']) if analysis else 0
-            trend = analysis['price_trend'] if analysis else '—'
+            price_trend = analysis['price_trend'] if analysis else '—'
+            margin_trend = analysis['margin_trend'] if analysis else '—'
 
-            # Calculate GP/hr and GP/day potential
-            effective_vol = min(opp['volume'], opp['limit'])
-            gp_per_hr = opp['profit'] * effective_vol
-            gp_per_day = gp_per_hr * 24
-
-            # Format GP/day nicely
-            if gp_per_day >= 1_000_000:
-                gp_day_str = f"{gp_per_day/1_000_000:.1f}M"
-            elif gp_per_day >= 1000:
-                gp_day_str = f"{gp_per_day/1000:.0f}K"
-            else:
-                gp_day_str = str(int(gp_per_day))
+            # Format GP values nicely
+            def fmt_gp(val):
+                if val >= 1_000_000: return f"{val/1_000_000:.1f}M"
+                elif val >= 1000: return f"{val/1000:.0f}K"
+                return str(int(val))
 
             opp_data.append({
                 'Item': opp['name'],
                 '💰/Flip': opp['profit'],
-                '💰/Day': gp_day_str,
+                '💰/hr': opp.get('gp_per_hr', 0),
+                '💰/Day': fmt_gp(opp.get('gp_per_day', 0)),
+                '💰/Limit': opp.get('gp_per_limit', 0),
+                'ROI %': opp.get('roi_pct', 0),
                 'Buy': opp['buy'],
                 'Sell': opp['sell'],
+                'Margin': opp['margin'],
                 'Margin %': round(opp['margin_pct'], 1),
                 'Vol/hr': opp['volume'],
+                'Vol/2hr': opp.get('vol_2hr', 0),
+                'Vol/4hr': opp.get('vol_4hr', 0),
+                'BuyVol': opp.get('buy_vol', 0),
+                'SellVol': opp.get('sell_vol', 0),
+                'Qty': opp['qty'],
+                'Limit': opp['limit'],
+                'Locked': opp.get('capital_locked', 0),
                 'Fresh': f"{freshness} {format_age(age)}",
+                'Strategy': opp.get('strategy', '—'),
+                'Risk': opp.get('risk', '—'),
                 'Stab': stab,
-                'Trend': trend,
-                '🔥Agg': opp['smart_agg']
+                'PriceTrend': price_trend,
+                'MargTrend': margin_trend,
+                '🔥Agg': opp['smart_agg'],
+                '⚖️Bal': opp['smart_bal'],
+                '🛡️Con': opp['smart_con']
             })
         df = pd.DataFrame(opp_data)
-        styled_df = style_dataframe(df, color_cols=['💰/Flip', 'Vol/hr', 'Stab', '🔥Agg'])
-        st.dataframe(styled_df)
-        st.caption("💰/Flip = profit per flip | 💰/Day = daily GP if flipping continuously | Stab=Stability")
+        styled_df = style_dataframe(df, color_cols=['💰/Flip', '💰/hr', 'ROI %', 'Vol/hr', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        st.dataframe(styled_df, use_container_width=True)
+        st.caption("💰/Flip=profit per flip | 💰/hr=GP/hour | 💰/Limit=profit at GE limit | ROI=return on investment | Locked=capital tied up")
     else:
         st.info("No opportunities with current filters")
 
@@ -2807,7 +3026,7 @@ else:
     # === SECTION: STABLE PICKS ===
     st.subheader("⭐ Stable Picks (Proven Margins)")
     if stable:
-        st.caption(f"Items with consistent margins over time. Tracking {len(history)} items. Click column headers to sort!")
+        st.caption(f"Items with consistent margins • FULL DATA SUPERSET • Tracking {len(history)} items. Click column headers to sort!")
 
         stable_data = []
         for s in stable:
@@ -2822,38 +3041,45 @@ else:
             else:
                 freshness = "🔴"
 
-            # Calculate GP/hr and GP/day potential
-            item_limit = items.get(s.get('item_id'), {}).get('limit', 1)
-            effective_vol = min(s.get('volume', 0), item_limit)
-            gp_per_hr = s['profit'] * effective_vol
-            gp_per_day = gp_per_hr * 24
-
-            # Format GP/day nicely
-            if gp_per_day >= 1_000_000:
-                gp_day_str = f"{gp_per_day/1_000_000:.1f}M"
-            elif gp_per_day >= 1000:
-                gp_day_str = f"{gp_per_day/1000:.0f}K"
-            else:
-                gp_day_str = str(int(gp_per_day))
+            # Format GP values nicely
+            def fmt_gp(val):
+                if val >= 1_000_000: return f"{val/1_000_000:.1f}M"
+                elif val >= 1000: return f"{val/1000:.0f}K"
+                return str(int(val))
 
             stable_data.append({
                 'Item': s['name'],
                 '💰/Flip': s['profit'],
-                '💰/Day': gp_day_str,
+                '💰/hr': s.get('gp_per_hr', 0),
+                '💰/Day': fmt_gp(s.get('gp_per_day', 0)),
+                '💰/Limit': s.get('gp_per_limit', 0),
+                'ROI %': s.get('roi_pct', 0),
                 'Buy': s['buy'],
                 'Sell': s['sell'],
+                'Margin': s.get('margin', 0),
                 'Margin %': round(s['margin_pct'], 1),
                 'Vol/hr': s.get('volume', 0),
+                'Vol/2hr': s.get('vol_2hr', 0),
+                'Vol/4hr': s.get('vol_4hr', 0),
+                'BuyVol': s.get('buy_vol', 0),
+                'SellVol': s.get('sell_vol', 0),
+                'Qty': s.get('qty', 0),
+                'Limit': s.get('limit', 0),
+                'Locked': s.get('capital_locked', 0),
                 'Fresh': f"{freshness} {format_age(age)}",
+                'Strategy': s.get('strategy', '—'),
+                'Risk': s.get('risk', '—'),
                 'Stab': s.get('score', 0),
-                'Price': s.get('price_trend', '—'),
-                'Margin': s.get('margin_trend', '—'),
-                '🔥Agg': s.get('smart_agg', 0)
+                'PriceTrend': s.get('price_trend', '—'),
+                'MargTrend': s.get('margin_trend', '—'),
+                '🔥Agg': s.get('smart_agg', 0),
+                '⚖️Bal': s.get('smart_bal', 0),
+                '🛡️Con': s.get('smart_con', 0)
             })
         df = pd.DataFrame(stable_data)
-        styled_df = style_dataframe(df, color_cols=['💰/Flip', 'Vol/hr', 'Stab', '🔥Agg'])
-        st.dataframe(styled_df)
-        st.caption("💰/Flip = profit per flip | 💰/Day = daily GP potential | Price/Margin = trend direction")
+        styled_df = style_dataframe(df, color_cols=['💰/Flip', '💰/hr', 'ROI %', 'Vol/hr', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        st.dataframe(styled_df, use_container_width=True)
+        st.caption("💰/Flip=profit per flip | 💰/hr=GP/hour | 💰/Limit=profit at GE limit | Stab=Stability score")
     else:
         st.info(f"Building data... tracking {len(history)} items. Keep page open!")
 
@@ -2948,6 +3174,8 @@ else:
     st.caption(f"📊 **{passed_ht}/{total_ht}** items above {price_threshold:,} gp are flippable right now")
 
     if high_ticket_items:
+        st.caption("FULL DATA SUPERSET • Sorted by 💎Score • Click column headers to re-sort!")
+
         high_ticket_data = []
         for item in high_ticket_items:
             # Freshness indicator (hours-based for high ticket)
@@ -2963,32 +3191,44 @@ else:
             else:
                 freshness = "🔴"
 
-            # Format GP/day nicely
-            gp_day = item['gp_per_day']
-            if gp_day >= 1_000_000:
-                gp_day_str = f"{gp_day/1_000_000:.1f}M"
-            elif gp_day >= 1000:
-                gp_day_str = f"{gp_day/1000:.0f}K"
-            else:
-                gp_day_str = str(gp_day)
+            # Format GP values nicely
+            def fmt_gp(val):
+                if val >= 1_000_000: return f"{val/1_000_000:.1f}M"
+                elif val >= 1000: return f"{val/1000:.0f}K"
+                return str(int(val))
 
             high_ticket_data.append({
                 'Item': item['name'],
                 '💎Score': item['flip_score'],
-                '💰/Flip': item['profit'],  # Profit per flip
-                '💰/Day': gp_day_str,  # Daily potential based on volume
+                '💰/Flip': item['profit'],
+                '💰/hr': item.get('gp_per_hr', 0),
+                '💰/Day': fmt_gp(item['gp_per_day']),
+                '💰/Limit': item.get('gp_per_limit', 0),
                 'ROI %': item['roi_pct'],
                 'Buy': item['buy'],
                 'Sell': item['sell'],
+                'Margin': item.get('margin', 0),
                 'Margin %': round(item['margin_pct'], 1),
-                'Vol': item['vol_display'],
+                'Vol/hr': item.get('volume', 0),
+                'Vol/2hr': item.get('vol_2hr', 0),
+                'Vol/4hr': item.get('vol_4hr', 0),
+                'Vol Est': item['vol_display'],
+                'BuyVol': item.get('buy_vol', 0),
+                'SellVol': item.get('sell_vol', 0),
+                'Qty': item['qty'],
+                'Limit': item['limit'],
+                'Locked': item.get('capital_locked', 0),
                 'Traded': f"{freshness} {item['last_traded']}",
-                'Risk': item['risk']
+                'Strategy': item.get('strategy', '—'),
+                'Risk': item['risk'],
+                '🔥Agg': item.get('smart_agg', 0),
+                '⚖️Bal': item.get('smart_bal', 0),
+                '🛡️Con': item.get('smart_con', 0)
             })
         df = pd.DataFrame(high_ticket_data)
-        styled_df = style_dataframe(df, color_cols=['💎Score', '💰/Flip', 'ROI %'])
-        st.dataframe(styled_df)
-        st.caption("💰/Flip = profit per flip | 💰/Day = daily GP potential | Vol = estimated trades (~6/day = about 6 trades per day)")
+        styled_df = style_dataframe(df, color_cols=['💎Score', '💰/Flip', '💰/hr', 'ROI %', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        st.dataframe(styled_df, use_container_width=True)
+        st.caption("💰/Flip=profit per flip | 💰/hr=GP/hour | 💰/Limit=profit at GE limit | Vol Est=estimated daily volume")
     else:
         st.info("No high ticket items currently flippable")
 
@@ -3092,6 +3332,9 @@ else:
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")
 
 # === AUTO-REFRESH ===
-if auto_refresh:
+if auto_refresh or live_monitor:
     st.markdown(f'<meta http-equiv="refresh" content="{refresh_interval}">', unsafe_allow_html=True)
-    st.caption(f"🔄 Auto-refreshing every {refresh_interval}s (state resets on refresh - this is normal)")
+    if live_monitor:
+        st.caption(f"🔴 LIVE MONITOR: Refreshing every {refresh_interval}s for price alerts | Settings persist across refreshes!")
+    else:
+        st.caption(f"🔄 Auto-refreshing every {refresh_interval}s | Settings persist across refreshes!")

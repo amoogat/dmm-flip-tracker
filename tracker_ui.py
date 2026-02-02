@@ -934,12 +934,14 @@ def style_dataframe(df, color_cols=None, format_cols=None):
     # Apply number formatting
     format_dict = {}
     for col in df.columns:
-        if col in ['Buy', 'Sell', 'Profit', 'Vol/hr', 'GP/hr', 'My Price', 'Market High', 'Market Low', 'Current High', 'Current Low', 'Diff', 'Target/hr', 'Done', '💎Potential']:
+        if col in ['Buy', 'Sell', 'Profit', 'Vol/hr', 'GP/hr', '💰GP/hr', 'Locked', 'My Price', 'Market High', 'Market Low', 'Current High', 'Current Low', 'Diff', 'Target/hr', 'Done', '💎Potential']:
             format_dict[col] = '{:,.0f}'
         elif col in ['Margin %']:
             format_dict[col] = '{:.2f}%'  # Add % symbol
-        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Qty', '#']:
+        elif col in ['🔥Agg', '⚖️Bal', '🛡️Con', 'Stab', 'Qty', '#', '💎Score']:
             format_dict[col] = '{:.0f}'
+        elif col in ['ROI %']:
+            format_dict[col] = '{:.1f}%'
 
     if format_dict:
         styler = styler.format(format_dict)
@@ -2530,28 +2532,10 @@ else:
             else:
                 freshness = "🔴"
 
-            # Format GP/hr nicely (k for thousands, m for millions)
-            gp_hr = item['gp_per_hour']
-            if gp_hr >= 1_000_000:
-                gp_hr_str = f"{gp_hr/1_000_000:.1f}m"
-            elif gp_hr >= 1000:
-                gp_hr_str = f"{gp_hr/1000:.0f}k"
-            else:
-                gp_hr_str = str(gp_hr)
-
-            # Format capital locked
-            cap_locked = item['capital_locked']
-            if cap_locked >= 1_000_000:
-                cap_str = f"{cap_locked/1_000_000:.1f}m"
-            elif cap_locked >= 1000:
-                cap_str = f"{cap_locked/1000:.0f}k"
-            else:
-                cap_str = str(cap_locked)
-
             high_ticket_data.append({
                 'Item': item['name'],
                 '💎Score': item['flip_score'],
-                'GP/hr': gp_hr_str,
+                '💰GP/hr': item['gp_per_hour'],
                 'ROI %': item['roi_pct'],
                 'Buy': item['buy'],
                 'Sell': item['sell'],
@@ -2559,13 +2543,13 @@ else:
                 'Vol/hr': item['volume'],
                 'Fresh': f"{freshness} {format_age(age)}",
                 'Risk': item['risk'],
-                '💵Locked': cap_str,
+                'Locked': item['capital_locked'],
                 'Profit': item['profit']
             })
         df = pd.DataFrame(high_ticket_data)
-        styled_df = style_dataframe(df, color_cols=['💎Score', 'Profit', 'Vol/hr', 'ROI %'])
+        styled_df = style_dataframe(df, color_cols=['💎Score', '💰GP/hr', 'Profit', 'Vol/hr', 'ROI %'])
         st.dataframe(styled_df)
-        st.caption(f"💎Score = GP/hr × ROI × Freshness × Volume (risk-adjusted) | 💵Locked = Capital tied up per flip | Threshold: {price_threshold:,} gp (75th %ile)")
+        st.caption(f"💎Score = Profit × ROI × Freshness (risk-adjusted) | Locked = Capital tied up | Threshold: {price_threshold:,} gp")
     else:
         st.info(f"No high ticket items above {price_threshold:,} gp meeting flip criteria")
 

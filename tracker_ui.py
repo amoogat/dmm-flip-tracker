@@ -1343,11 +1343,22 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
             filter_reasons.append(f"💰 Can't afford ({high:,} > {capital:,})")
 
         vol = volumes.get(item_id_str, {})
-        total_vol = (vol.get('highPriceVolume', 0) or 0) + (vol.get('lowPriceVolume', 0) or 0)
+        api_vol = (vol.get('highPriceVolume', 0) or 0) + (vol.get('lowPriceVolume', 0) or 0)
 
-        # HIGH TICKET: Don't filter on hourly volume!
-        # If it has price data, it traded at SOME point (timestamp tells us when)
-        # We'll show volume as info, not filter on it
+        # SMART VOLUME: If API says 0 but timestamp is recent, it DID trade
+        # The volume API might not have the item, but price timestamps prove trades happened
+        if api_vol == 0 and age < 3600:
+            # Traded in last hour but volume API doesn't have it - infer at least 1
+            inferred_vol = 1
+            vol_display = "1+"  # Show it traded but exact count unknown
+        elif api_vol == 0:
+            inferred_vol = 0
+            vol_display = "0"
+        else:
+            inferred_vol = api_vol
+            vol_display = str(api_vol)
+
+        total_vol = inferred_vol  # Use for calculations
 
         margin = high - low - int(high * 0.01) if high and low else 0
         margin_pct = (margin / low * 100) if low and low > 0 else 0
@@ -1453,6 +1464,7 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
             'margin': margin,
             'margin_pct': margin_pct,
             'volume': total_vol,
+            'vol_display': vol_display,  # "1+" if inferred, actual number otherwise
             'profit': profit_per_cycle,
             'qty': max_qty,
             'age': age,
@@ -2611,15 +2623,15 @@ else:
                 'Buy': item['buy'],
                 'Sell': item['sell'],
                 'Margin %': round(item['margin_pct'], 1),
-                'Vol/hr': item['volume'],
+                'Vol': item['vol_display'],  # "1+" if inferred from timestamp
                 'Last Trade': f"{freshness} {item['last_traded']}",
                 'Risk': item['risk'],
                 'Locked': item['capital_locked']
             })
         df = pd.DataFrame(high_ticket_data)
-        styled_df = style_dataframe(df, color_cols=['💎Score', 'Profit', 'Vol/hr', 'ROI %'])
+        styled_df = style_dataframe(df, color_cols=['💎Score', 'Profit', 'ROI %'])
         st.dataframe(styled_df)
-        st.caption("💎Score = Profit × ROI × Freshness | Profit = per flip | Last Trade = when it last sold on GE")
+        st.caption("💎Score = Profit × ROI × Freshness | Vol = trades/hr (1+ = traded recently but count unknown)")
     else:
         st.info("No high ticket items currently flippable")
 

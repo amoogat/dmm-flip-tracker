@@ -1855,46 +1855,34 @@ def find_market_movers(items, history, prices, volumes):
     movers.sort(key=lambda x: x['urgency'], reverse=True)
     return movers
 
-def get_advanced_flips(items, prices, volumes, capital):
+def get_curated_flips(items, prices, volumes, capital):
     """
-    Get specialized flip categories:
-    - Barrows items
-    - Moons of Peril items
-    - PK Gear (high-value combat equipment)
-    - PK Consumables (brews, restores, food)
-    - Overnight plays (low volume, high margin potential)
+    Analyze ALL items and categorize into:
+    - Top Opportunities: Fresh prices, active markets, good margins
+    - Stable Picks: Consistent margins, high liquidity, reliable
+    - High Ticket: Expensive items with profit potential
+
+    Each category is split into:
+    - OBVIOUS: High volume, clear margins (everyone knows)
+    - SOLID: Balanced metrics, reliable choices
+    - SLEEPERS: Low competition, hidden gems
     """
     import time
+    import math
     now = int(time.time())
 
-    # Keywords for each category
-    barrows_kw = ['ahrim', 'dharok', 'guthan', 'karil', 'torag', 'verac']
-    moons_kw = ['eclipse', 'blood moon', 'blue moon', 'dual macuahuitl', 'sulphur', 'atlatl']
-    pk_gear_kw = ['ancient godsword', 'armadyl', 'bandos', 'ancestral', 'dragon claws',
-                  'volatile', 'eldritch', 'harmonised', 'kodai', 'torva', 'masori',
-                  'zaryte', 'voidwaker', 'tumeken', 'osmumten', 'toxic blowpipe',
-                  'serpentine', 'magma helm', 'tanzanite helm', 'trident', 'toxic staff',
-                  'staff of the dead', 'staff of light', 'abyssal', 'kraken', 'pegasian',
-                  'primordial', 'eternal', 'avernic', 'dragon defender', 'berserker ring',
-                  'archers ring', 'seers ring', 'warrior ring', 'ring of suffering',
-                  'amulet of torture', 'necklace of anguish', 'occult necklace', 'zenyte']
-    consumables_kw = ['super restore', 'saradomin brew', 'anglerfish', 'manta ray',
-                      'dark crab', 'super combat', 'ranging potion', 'sanfew',
-                      'divine', 'stamina', 'prayer potion', 'cooked karambwan',
-                      'blighted']
+    # Calculate price threshold for high ticket (75th percentile)
+    all_prices = [(prices.get(str(iid), {}).get('high') or 0) for iid in items.keys()]
+    all_prices = [p for p in all_prices if p > 0]
+    high_ticket_threshold = sorted(all_prices)[int(len(all_prices) * 0.75)] if all_prices else 100000
 
-    results = {
-        'barrows': [],
-        'moons': [],
-        'pk_gear': [],
-        'consumables': [],
-        'overnight': []
-    }
+    # Collect all valid items
+    top_opps = []
+    stable_picks = []
+    high_ticket = []
 
     for item_id, item in items.items():
-        name_lower = item['name'].lower()
         item_id_str = str(item_id)
-
         p = prices.get(item_id_str, {})
         v = volumes.get(item_id_str, {})
 
@@ -1916,27 +1904,23 @@ def get_advanced_flips(items, prices, volumes, capital):
         margin_pct = (margin / buy * 100) if buy > 0 else 0
         vol = (v.get('highPriceVolume') or 0) + (v.get('lowPriceVolume') or 0)
 
-        # Skip negative margins
-        if margin <= 0:
+        # FILTER OUT JUNK
+        if margin < 1 or buy < 10:
             continue
-
-        # Skip if can't afford
-        if buy > capital:
-            continue
-
-        # FILTER OUT BRACKET SCAMS: Extreme spreads are fake offers
         spread_ratio = sell / buy if buy > 0 else 999
-        if spread_ratio > 5.0:  # Skip ridiculous spreads (5x+)
+        if spread_ratio > 2.0:  # Skip wide spreads
             continue
-        if margin_pct > 200:  # Skip insane margins (200%+)
-            continue
-        if buy < 10:  # Skip 1gp bracket scam buys
+        if buy > capital:
             continue
 
         limit = item.get('limit', 1)
         gp_per_limit = margin * limit
         max_qty = min(capital // buy, limit) if buy > 0 else 0
         gp_per_flip = margin * max_qty
+
+        # GP/hr calculation
+        flips_per_hr = min(vol * 0.07, limit / 4) if vol > 0 else 0
+        gp_per_hr = int(margin * flips_per_hr)
 
         data = {
             'id': item_id,
@@ -1950,54 +1934,101 @@ def get_advanced_flips(items, prices, volumes, capital):
             'qty': max_qty,
             'gp_per_flip': gp_per_flip,
             'gp_per_limit': gp_per_limit,
+            'gp_per_hr': gp_per_hr,
             'age': age,
             'spread_ratio': round(spread_ratio, 2)
         }
 
-        # Categorize by keywords
-        matched = False
-        if any(kw in name_lower for kw in barrows_kw):
-            results['barrows'].append(data)
-            matched = True
-        if any(kw in name_lower for kw in moons_kw):
-            results['moons'].append(data)
-            matched = True
-        if any(kw in name_lower for kw in pk_gear_kw):
-            results['pk_gear'].append(data)
-            matched = True
-        if any(kw in name_lower for kw in consumables_kw):
-            results['consumables'].append(data)
-            matched = True
+        # === TOP OPPORTUNITIES ===
+        # Fresh prices (<5min), decent margins (3-30%), good volume
+        if (age <= 300 and
+            3 <= margin_pct <= 30 and
+            vol >= 10):
+            top_opps.append(data)
 
-        # OVERNIGHT PLAYS: Low volume (<10) but decent margin potential
-        # Items that might fill if you leave an offer overnight
-        # Pacific timezone - overnight = ~10pm-8am = 10 hours
-        # Extra strict filters for overnight to ensure quality
-        is_good_overnight = (
-            vol <= 10 and
-            margin_pct >= 5 and
-            margin_pct <= 80 and         # Cap at 80% - be stricter for overnight
-            spread_ratio <= 2.5 and      # Max 2.5x spread ratio
-            buy >= 500 and               # Min buy price 500gp (filters junk)
-            gp_per_limit >= 50000 and
-            age < 86400
-        )
-        if is_good_overnight:
-            # Estimate if offer might fill overnight (very rough)
-            # If 1 trade/day avg and we leave offer for 10hrs, ~40% chance
-            overnight_chance = min(90, max(10, (vol + 1) * 10))  # rough estimate
-            data_ov = data.copy()
-            data_ov['overnight_chance'] = overnight_chance
-            results['overnight'].append(data_ov)
+        # === STABLE PICKS ===
+        # Moderate margins (3-15%), good volume, low spread
+        if (age <= 600 and
+            3 <= margin_pct <= 15 and
+            vol >= 20 and
+            spread_ratio <= 1.3):
+            stable_picks.append(data)
 
-    # Sort each category by GP/limit potential
-    results['barrows'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
-    results['moons'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
-    results['pk_gear'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
-    results['consumables'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
-    results['overnight'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
+        # === HIGH TICKET ===
+        # Expensive items with positive margins
+        if (buy >= high_ticket_threshold and
+            margin > 0 and
+            age <= 3600):  # Traded in last hour
+            high_ticket.append(data)
 
-    return results
+    # Now categorize each into OBVIOUS / SOLID / SLEEPERS
+    def categorize(items_list, sort_key='gp_per_limit'):
+        obvious = []
+        solid = []
+        sleepers = []
+
+        for item in items_list:
+            vol = item['volume']
+            margin_pct = item['margin_pct']
+            gp_limit = item['gp_per_limit']
+            age = item['age']
+
+            # OBVIOUS: High volume + decent margin + fresh
+            if vol >= 100 and margin_pct >= 5 and age <= 180:
+                obvious.append(item)
+            # SLEEPER: Lower volume but great per-limit profit
+            elif vol <= 40 and gp_limit >= 20000:
+                sleepers.append(item)
+            # SOLID: Everything else that's decent
+            elif vol >= 20 and margin_pct >= 3:
+                solid.append(item)
+
+        # Sort each by the key
+        obvious.sort(key=lambda x: x[sort_key], reverse=True)
+        solid.sort(key=lambda x: (-x['volume'], -x['margin']))  # Volume first for solid
+        sleepers.sort(key=lambda x: x[sort_key], reverse=True)
+
+        return {
+            'obvious': obvious[:10],
+            'solid': solid[:10],
+            'sleepers': sleepers[:10]
+        }
+
+    # High ticket has different categorization (lower volume is normal)
+    def categorize_high_ticket(items_list):
+        obvious = []
+        solid = []
+        sleepers = []
+
+        for item in items_list:
+            vol = item['volume']
+            margin_pct = item['margin_pct']
+            gp_limit = item['gp_per_limit']
+
+            # For high ticket, even low volume is fine
+            if vol >= 5 and margin_pct >= 3:
+                obvious.append(item)
+            elif vol >= 1 and gp_limit >= 500000:
+                solid.append(item)
+            elif gp_limit >= 100000:
+                sleepers.append(item)
+
+        obvious.sort(key=lambda x: x['gp_per_limit'], reverse=True)
+        solid.sort(key=lambda x: x['gp_per_limit'], reverse=True)
+        sleepers.sort(key=lambda x: x['gp_per_limit'], reverse=True)
+
+        return {
+            'obvious': obvious[:10],
+            'solid': solid[:10],
+            'sleepers': sleepers[:10]
+        }
+
+    return {
+        'top_opps': categorize(top_opps),
+        'stable': categorize(stable_picks),
+        'high_ticket': categorize_high_ticket(high_ticket),
+        'threshold': high_ticket_threshold
+    }
 
 def get_item_price_analysis(item_id, item_name):
     """
@@ -3535,14 +3566,14 @@ else:
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")
 
     # =====================================================================
-    # === SECTION: ADVANCED FLIPS ===
+    # === SECTION: CURATED FLIP LISTS ===
     # =====================================================================
     st.markdown("---")
-    st.header("⚔️ Advanced Flips")
-    st.caption("Specialized categories for serious flippers • Barrows, Moons, PK Gear, Consumables, and Overnight Plays")
+    st.header("📋 Curated Flip Lists")
+    st.caption("90 hand-picked items based on real metrics: volume, margin, freshness • OBVIOUS / SOLID / SLEEPERS")
 
-    # Fetch advanced flip data
-    advanced_flips = get_advanced_flips(items, prices, volumes, capital)
+    # Fetch curated flip data
+    curated = get_curated_flips(items, prices, volumes, capital)
 
     def fmt_gp(val):
         if val >= 1_000_000: return f"{val/1_000_000:.1f}M"
@@ -3557,150 +3588,111 @@ else:
         else:
             return f"{seconds//86400}d"
 
-    # Create tabs for each category
-    adv_tab1, adv_tab2, adv_tab3, adv_tab4, adv_tab5 = st.tabs([
-        f"⚔️ Barrows ({len(advanced_flips['barrows'])})",
-        f"🌙 Moons ({len(advanced_flips['moons'])})",
-        f"🗡️ PK Gear ({len(advanced_flips['pk_gear'])})",
-        f"🧪 Consumables ({len(advanced_flips['consumables'])})",
-        f"🌙 Overnight ({len(advanced_flips['overnight'])})"
+    def render_category_table(items_list, title):
+        """Render a table for a category (obvious/solid/sleepers)"""
+        if not items_list:
+            st.info(f"No {title.lower()} items found")
+            return
+
+        data = []
+        for item in items_list:
+            data.append({
+                'Item': item['name'],
+                'Buy': item['buy'],
+                'Sell': item['sell'],
+                'Margin %': item['margin_pct'],
+                'Vol/hr': item['volume'],
+                'GP/Limit': item['gp_per_limit'],
+                'GP/hr': item.get('gp_per_hr', 0),
+                'Limit': item['limit'],
+                'Age': format_age_short(item['age'])
+            })
+        df = pd.DataFrame(data)
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # Create tabs for each main category
+    curated_tab1, curated_tab2, curated_tab3 = st.tabs([
+        "🎯 Top Opportunities",
+        "⭐ Stable Picks",
+        f"💎 High Ticket (>{fmt_gp(curated['threshold'])})"
     ])
 
-    # === BARROWS TAB ===
-    with adv_tab1:
-        st.subheader("⚔️ Barrows Equipment")
-        st.caption("Ahrim's, Dharok's, Guthan's, Karil's, Torag's, Verac's sets and pieces")
+    # === TOP OPPORTUNITIES TAB ===
+    with curated_tab1:
+        st.subheader("🎯 Top Opportunities")
+        st.caption("Fresh prices (<5min), active markets, good margins (3-30%)")
 
-        if advanced_flips['barrows']:
-            barrows_data = []
-            for item in advanced_flips['barrows'][:20]:
-                barrows_data.append({
-                    'Item': item['name'],
-                    'Buy': item['buy'],
-                    'Sell': item['sell'],
-                    'Margin %': item['margin_pct'],
-                    'Vol/hr': item['volume'],
-                    'GP/Flip': item['gp_per_flip'],
-                    'GP/Limit': item['gp_per_limit'],
-                    'Limit': item['limit'],
-                    'Age': format_age_short(item['age'])
-                })
-            df = pd.DataFrame(barrows_data)
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("No Barrows items with positive margins found")
+        top_data = curated['top_opps']
 
-    # === MOONS TAB ===
-    with adv_tab2:
-        st.subheader("🌙 Moons of Peril")
-        st.caption("Blood Moon, Blue Moon, Eclipse Moon, Dual Macuahuitl, Sulphur Blades, Atlatl")
+        # OBVIOUS
+        st.markdown("### 🔥 OBVIOUS (High volume, everyone knows)")
+        st.caption("Vol ≥100/hr, Margin ≥5%, Fresh <3min • Heavy competition but guaranteed fills")
+        render_category_table(top_data['obvious'], "obvious")
 
-        if advanced_flips['moons']:
-            moons_data = []
-            for item in advanced_flips['moons'][:20]:
-                moons_data.append({
-                    'Item': item['name'],
-                    'Buy': item['buy'],
-                    'Sell': item['sell'],
-                    'Margin %': item['margin_pct'],
-                    'Vol/hr': item['volume'],
-                    'GP/Flip': item['gp_per_flip'],
-                    'GP/Limit': item['gp_per_limit'],
-                    'Limit': item['limit'],
-                    'Age': format_age_short(item['age'])
-                })
-            df = pd.DataFrame(moons_data)
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("No Moons of Peril items with positive margins found")
+        st.markdown("---")
 
-    # === PK GEAR TAB ===
-    with adv_tab3:
-        st.subheader("🗡️ PK Gear")
-        st.caption("High-value combat equipment: AGS, Claws, Armadyl, Bandos, Ancestral, Torva, Masori, etc.")
+        # SOLID
+        st.markdown("### ✅ SOLID (Balanced, reliable)")
+        st.caption("Vol ≥20/hr, Margin ≥3% • Good balance of fill speed and profit")
+        render_category_table(top_data['solid'], "solid")
 
-        if advanced_flips['pk_gear']:
-            pk_data = []
-            for item in advanced_flips['pk_gear'][:25]:
-                pk_data.append({
-                    'Item': item['name'],
-                    'Buy': item['buy'],
-                    'Sell': item['sell'],
-                    'Margin %': item['margin_pct'],
-                    'Vol/hr': item['volume'],
-                    'GP/Flip': item['gp_per_flip'],
-                    'GP/Limit': item['gp_per_limit'],
-                    'Limit': item['limit'],
-                    'Age': format_age_short(item['age'])
-                })
-            df = pd.DataFrame(pk_data)
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("No PK gear with positive margins found")
+        st.markdown("---")
 
-    # === CONSUMABLES TAB ===
-    with adv_tab4:
-        st.subheader("🧪 PK Consumables")
-        st.caption("Brews, Restores, Food, Combat Pots - essential PK supplies")
+        # SLEEPERS
+        st.markdown("### 💤 SLEEPERS (Hidden gems)")
+        st.caption("Vol ≤40/hr but GP/Limit ≥20K • Less competition, higher margins")
+        render_category_table(top_data['sleepers'], "sleeper")
 
-        if advanced_flips['consumables']:
-            cons_data = []
-            for item in advanced_flips['consumables'][:25]:
-                cons_data.append({
-                    'Item': item['name'],
-                    'Buy': item['buy'],
-                    'Sell': item['sell'],
-                    'Margin %': item['margin_pct'],
-                    'Vol/hr': item['volume'],
-                    'GP/Flip': item['gp_per_flip'],
-                    'GP/Limit': item['gp_per_limit'],
-                    'Limit': item['limit'],
-                    'Age': format_age_short(item['age'])
-                })
-            df = pd.DataFrame(cons_data)
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("No consumables with positive margins found")
+    # === STABLE PICKS TAB ===
+    with curated_tab2:
+        st.subheader("⭐ Stable Picks")
+        st.caption("Consistent margins, high liquidity, low spread (<1.3x)")
 
-    # === OVERNIGHT PLAYS TAB ===
-    with adv_tab5:
-        st.subheader("🌙 Overnight Plays (Pacific Time)")
-        st.caption("Low-volume, high-margin items. Place offers before bed (~10pm PT), check in the morning (~8am PT).")
-        st.info("💡 **Strategy**: These items trade slowly but have big margins. Leave buy offers overnight for potential fills!")
+        stable_data = curated['stable']
 
-        if advanced_flips['overnight']:
-            overnight_data = []
-            for item in advanced_flips['overnight'][:30]:
-                overnight_data.append({
-                    'Item': item['name'],
-                    'Buy At': item['buy'],
-                    'Sell At': item['sell'],
-                    'Margin %': item['margin_pct'],
-                    'Vol/hr': item['volume'],
-                    'GP/Limit': item['gp_per_limit'],
-                    'Limit': item['limit'],
-                    'Fill %': f"~{item.get('overnight_chance', '?')}%",
-                    'Last Trade': format_age_short(item['age'])
-                })
-            df = pd.DataFrame(overnight_data)
-            st.dataframe(df, use_container_width=True)
+        # OBVIOUS
+        st.markdown("### 🔥 OBVIOUS (Highest volume)")
+        render_category_table(stable_data['obvious'], "obvious")
 
-            st.markdown("---")
-            st.markdown("### 🎯 Top 5 Overnight Recommendations")
-            top5 = advanced_flips['overnight'][:5]
-            for i, item in enumerate(top5, 1):
-                expected_profit = item['gp_per_limit'] * item.get('overnight_chance', 50) / 100
-                st.markdown(f"""
-**{i}. {item['name']}**
-- 📥 Buy at: **{item['buy']:,}** gp
-- 📤 Sell at: **{item['sell']:,}** gp
-- 💰 Profit if fills: **{fmt_gp(item['gp_per_limit'])}** (limit: {item['limit']})
-- 📊 Volume: {item['volume']}/hr | Last trade: {format_age_short(item['age'])} ago
-""")
-        else:
-            st.info("No overnight opportunities found with current filters")
+        st.markdown("---")
 
-    # === ITEM ANALYZER (analyze any item) ===
+        # SOLID
+        st.markdown("### ✅ SOLID (Reliable workhorses)")
+        render_category_table(stable_data['solid'], "solid")
+
+        st.markdown("---")
+
+        # SLEEPERS
+        st.markdown("### 💤 SLEEPERS (Overlooked)")
+        render_category_table(stable_data['sleepers'], "sleeper")
+
+    # === HIGH TICKET TAB ===
+    with curated_tab3:
+        st.subheader(f"💎 High Ticket Flips (>{fmt_gp(curated['threshold'])})")
+        st.caption("Expensive items with profit potential • Lower volume is expected")
+
+        ht_data = curated['high_ticket']
+
+        # OBVIOUS
+        st.markdown("### 🔥 OBVIOUS (Most active high-value)")
+        st.caption("Vol ≥5/hr • The 'liquid' expensive items")
+        render_category_table(ht_data['obvious'], "obvious")
+
+        st.markdown("---")
+
+        # SOLID
+        st.markdown("### ✅ SOLID (Good GP potential)")
+        st.caption("GP/Limit ≥500K • Worth the wait")
+        render_category_table(ht_data['solid'], "solid")
+
+        st.markdown("---")
+
+        # SLEEPERS
+        st.markdown("### 💤 SLEEPERS (Patience pays)")
+        st.caption("GP/Limit ≥100K • May take hours to fill but big margins")
+        render_category_table(ht_data['sleepers'], "sleeper")
+
+    # === ITEM ANALYZER ===
     st.markdown("---")
     st.subheader("🔬 Item Price Analyzer")
     st.caption("Get buy/sell recommendations for any item based on 48hr price history")
@@ -3720,7 +3712,6 @@ else:
             matches = [(name, iid) for name, iid in item_names.items() if search_lower in name][:5]
             if matches:
                 st.warning(f"Exact match not found. Did you mean: {', '.join([m[0].title() for m in matches])}?")
-                # Use first match
                 found_id = matches[0][1] if len(matches) == 1 else None
                 if found_id:
                     search_lower = matches[0][0]
@@ -3732,7 +3723,6 @@ else:
             if analysis:
                 st.success(f"### 📊 {analysis['name']} Analysis")
 
-                # Current prices from latest API
                 current = prices.get(str(found_id), {})
                 curr_high = current.get('high', 0)
                 curr_low = current.get('low', 0)
@@ -3742,23 +3732,6 @@ else:
                 col2.metric("Current Sell", f"{max(curr_high, curr_low):,}" if curr_high and curr_low else "N/A")
                 margin_now = max(curr_high, curr_low) - min(curr_high, curr_low) - int(max(curr_high, curr_low) * 0.01) if curr_high and curr_low else 0
                 col3.metric("Current Margin", f"{margin_now:,}" if margin_now else "N/A")
-
-                st.markdown("---")
-
-                st.markdown("#### 📈 48-Hour Price Range")
-                range_col1, range_col2 = st.columns(2)
-                with range_col1:
-                    st.markdown("**Buy Side (Low Prices)**")
-                    st.write(f"- Min: {analysis['buy_min_48h']:,}")
-                    st.write(f"- Max: {analysis['buy_max_48h']:,}")
-                    st.write(f"- 48hr Avg: {analysis['buy_avg_48h']:,}")
-                    st.write(f"- 6hr Avg: {analysis['buy_avg_6h']:,}")
-                with range_col2:
-                    st.markdown("**Sell Side (High Prices)**")
-                    st.write(f"- Min: {analysis['sell_min_48h']:,}")
-                    st.write(f"- Max: {analysis['sell_max_48h']:,}")
-                    st.write(f"- 48hr Avg: {analysis['sell_avg_48h']:,}")
-                    st.write(f"- 6hr Avg: {analysis['sell_avg_6h']:,}")
 
                 st.markdown("---")
                 st.markdown("#### 🎯 Recommendations")
@@ -3775,35 +3748,14 @@ else:
                     st.markdown(f"- ⚖️ Balanced: **{analysis['sell_balanced']:,}** (6hr avg)")
                     st.markdown(f"- 💎 Patient: **{analysis['sell_patient']:,}** (max profit)")
 
-                # Profit table
-                st.markdown("---")
-                st.markdown("#### 💰 Profit Matrix")
+                # Quick profit calc
                 item_limit = items.get(found_id, {}).get('limit', 1)
-                st.caption(f"GE Limit: {item_limit}")
-
-                profit_data = []
-                for buy_strat, buy_price in [("Conservative", analysis['buy_conservative']),
-                                              ("Balanced", analysis['buy_balanced']),
-                                              ("Aggressive", analysis['buy_aggressive'])]:
-                    for sell_strat, sell_price in [("Quick", analysis['sell_quick']),
-                                                    ("Balanced", analysis['sell_balanced']),
-                                                    ("Patient", analysis['sell_patient'])]:
-                        margin = sell_price - buy_price - int(sell_price * 0.01)
-                        if margin > 0:
-                            profit_data.append({
-                                'Buy Strategy': buy_strat,
-                                'Sell Strategy': sell_strat,
-                                'Buy': f"{buy_price:,}",
-                                'Sell': f"{sell_price:,}",
-                                'Margin': f"{margin:,}",
-                                'Profit/Limit': f"{fmt_gp(margin * item_limit)}"
-                            })
-
-                if profit_data:
-                    df = pd.DataFrame(profit_data)
-                    st.dataframe(df, use_container_width=True, hide_index=True)
+                best_margin = analysis['sell_patient'] - analysis['buy_conservative'] - int(analysis['sell_patient'] * 0.01)
+                if best_margin > 0:
+                    st.markdown("---")
+                    st.markdown(f"**💰 Best Case:** Buy @ {analysis['buy_conservative']:,} → Sell @ {analysis['sell_patient']:,} = **{fmt_gp(best_margin * item_limit)}** profit (limit: {item_limit})")
             else:
-                st.error("Could not fetch price history for this item. It may not have enough trade data.")
+                st.error("Could not fetch price history. Item may not have enough trade data.")
         elif analyze_item_name:
             st.error("Item not found. Try a different search term.")
 

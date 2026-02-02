@@ -1855,6 +1855,183 @@ def find_market_movers(items, history, prices, volumes):
     movers.sort(key=lambda x: x['urgency'], reverse=True)
     return movers
 
+def get_advanced_flips(items, prices, volumes, capital):
+    """
+    Get specialized flip categories:
+    - Barrows items
+    - Moons of Peril items
+    - PK Gear (high-value combat equipment)
+    - PK Consumables (brews, restores, food)
+    - Overnight plays (low volume, high margin potential)
+    """
+    import time
+    now = int(time.time())
+
+    # Keywords for each category
+    barrows_kw = ['ahrim', 'dharok', 'guthan', 'karil', 'torag', 'verac']
+    moons_kw = ['eclipse', 'blood moon', 'blue moon', 'dual macuahuitl', 'sulphur', 'atlatl']
+    pk_gear_kw = ['ancient godsword', 'armadyl', 'bandos', 'ancestral', 'dragon claws',
+                  'volatile', 'eldritch', 'harmonised', 'kodai', 'torva', 'masori',
+                  'zaryte', 'voidwaker', 'tumeken', 'osmumten', 'toxic blowpipe',
+                  'serpentine', 'magma helm', 'tanzanite helm', 'trident', 'toxic staff',
+                  'staff of the dead', 'staff of light', 'abyssal', 'kraken', 'pegasian',
+                  'primordial', 'eternal', 'avernic', 'dragon defender', 'berserker ring',
+                  'archers ring', 'seers ring', 'warrior ring', 'ring of suffering',
+                  'amulet of torture', 'necklace of anguish', 'occult necklace', 'zenyte']
+    consumables_kw = ['super restore', 'saradomin brew', 'anglerfish', 'manta ray',
+                      'dark crab', 'super combat', 'ranging potion', 'sanfew',
+                      'divine', 'stamina', 'prayer potion', 'cooked karambwan',
+                      'blighted']
+
+    results = {
+        'barrows': [],
+        'moons': [],
+        'pk_gear': [],
+        'consumables': [],
+        'overnight': []
+    }
+
+    for item_id, item in items.items():
+        name_lower = item['name'].lower()
+        item_id_str = str(item_id)
+
+        p = prices.get(item_id_str, {})
+        v = volumes.get(item_id_str, {})
+
+        api_high = p.get('high') or 0
+        api_low = p.get('low') or 0
+        high_time = p.get('highTime') or 0
+        low_time = p.get('lowTime') or 0
+
+        if not api_high or not api_low:
+            continue
+
+        # Handle inverted prices
+        sell = max(api_high, api_low)
+        buy = min(api_high, api_low)
+
+        age = max(now - high_time, now - low_time) if high_time and low_time else 999999
+
+        margin = sell - buy - int(sell * 0.01)
+        margin_pct = (margin / buy * 100) if buy > 0 else 0
+        vol = (v.get('highPriceVolume') or 0) + (v.get('lowPriceVolume') or 0)
+
+        # Skip negative margins
+        if margin <= 0:
+            continue
+
+        # Skip if can't afford
+        if buy > capital:
+            continue
+
+        limit = item.get('limit', 1)
+        gp_per_limit = margin * limit
+        max_qty = min(capital // buy, limit) if buy > 0 else 0
+        gp_per_flip = margin * max_qty
+
+        data = {
+            'id': item_id,
+            'name': item['name'],
+            'buy': buy,
+            'sell': sell,
+            'margin': margin,
+            'margin_pct': round(margin_pct, 1),
+            'volume': vol,
+            'limit': limit,
+            'qty': max_qty,
+            'gp_per_flip': gp_per_flip,
+            'gp_per_limit': gp_per_limit,
+            'age': age
+        }
+
+        # Categorize by keywords
+        matched = False
+        if any(kw in name_lower for kw in barrows_kw):
+            results['barrows'].append(data)
+            matched = True
+        if any(kw in name_lower for kw in moons_kw):
+            results['moons'].append(data)
+            matched = True
+        if any(kw in name_lower for kw in pk_gear_kw):
+            results['pk_gear'].append(data)
+            matched = True
+        if any(kw in name_lower for kw in consumables_kw):
+            results['consumables'].append(data)
+            matched = True
+
+        # OVERNIGHT PLAYS: Low volume (<10) but decent margin potential
+        # Items that might fill if you leave an offer overnight
+        # Pacific timezone - overnight = ~10pm-8am = 10 hours
+        if vol <= 10 and margin_pct >= 5 and gp_per_limit >= 50000 and age < 86400:
+            # Estimate if offer might fill overnight (very rough)
+            # If 1 trade/day avg and we leave offer for 10hrs, ~40% chance
+            overnight_chance = min(90, max(10, (vol + 1) * 10))  # rough estimate
+            data_ov = data.copy()
+            data_ov['overnight_chance'] = overnight_chance
+            results['overnight'].append(data_ov)
+
+    # Sort each category by GP/limit potential
+    results['barrows'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
+    results['moons'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
+    results['pk_gear'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
+    results['consumables'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
+    results['overnight'].sort(key=lambda x: x['gp_per_limit'], reverse=True)
+
+    return results
+
+def get_item_price_analysis(item_id, item_name):
+    """
+    Fetch timeseries data and provide buy/sell recommendations for an item.
+    Returns analysis dict with recommendations.
+    """
+    try:
+        resp = requests.get(
+            f'https://prices.runescape.wiki/api/v1/dmm/timeseries?id={item_id}&timestep=1h',
+            headers=HEADERS,
+            timeout=10
+        )
+        data = resp.json().get('data', [])[-48:]
+
+        if len(data) < 6:
+            return None
+
+        # Extract prices
+        lows = [d.get('avgLowPrice') for d in data if d.get('avgLowPrice')]
+        highs = [d.get('avgHighPrice') for d in data if d.get('avgHighPrice')]
+
+        if not lows or not highs:
+            return None
+
+        # Recent averages (last 6 hours)
+        recent_lows = lows[-6:] if len(lows) >= 6 else lows
+        recent_highs = highs[-6:] if len(highs) >= 6 else highs
+
+        analysis = {
+            'item_id': item_id,
+            'name': item_name,
+            'buy_min_48h': min(lows),
+            'buy_max_48h': max(lows),
+            'buy_avg_48h': sum(lows) // len(lows),
+            'buy_avg_6h': sum(recent_lows) // len(recent_lows),
+            'buy_min_6h': min(recent_lows),
+            'sell_min_48h': min(highs),
+            'sell_max_48h': max(highs),
+            'sell_avg_48h': sum(highs) // len(highs),
+            'sell_avg_6h': sum(recent_highs) // len(recent_highs),
+            'sell_max_6h': max(recent_highs),
+            # Recommendations
+            'buy_conservative': min(recent_lows),
+            'buy_balanced': sum(recent_lows) // len(recent_lows),
+            'buy_aggressive': sum(lows) // len(lows) + 5,
+            'sell_quick': sum(recent_lows) // len(recent_lows) + 10,
+            'sell_balanced': sum(recent_highs) // len(recent_highs),
+            'sell_patient': max(recent_highs)
+        }
+
+        return analysis
+    except Exception as e:
+        return None
+
 # === LOAD DATA ===
 try:
     items, item_names = fetch_items()
@@ -3336,6 +3513,286 @@ else:
 
     st.markdown("---")
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")
+
+    # =====================================================================
+    # === SECTION: ADVANCED FLIPS ===
+    # =====================================================================
+    st.markdown("---")
+    st.header("⚔️ Advanced Flips")
+    st.caption("Specialized categories for serious flippers • Barrows, Moons, PK Gear, Consumables, and Overnight Plays")
+
+    # Fetch advanced flip data
+    advanced_flips = get_advanced_flips(items, prices, volumes, capital)
+
+    def fmt_gp(val):
+        if val >= 1_000_000: return f"{val/1_000_000:.1f}M"
+        elif val >= 1000: return f"{val/1000:.0f}K"
+        return str(int(val))
+
+    def format_age_short(seconds):
+        if seconds < 3600:
+            return f"{seconds//60}m"
+        elif seconds < 86400:
+            return f"{seconds//3600}h"
+        else:
+            return f"{seconds//86400}d"
+
+    # Create tabs for each category
+    adv_tab1, adv_tab2, adv_tab3, adv_tab4, adv_tab5 = st.tabs([
+        f"⚔️ Barrows ({len(advanced_flips['barrows'])})",
+        f"🌙 Moons ({len(advanced_flips['moons'])})",
+        f"🗡️ PK Gear ({len(advanced_flips['pk_gear'])})",
+        f"🧪 Consumables ({len(advanced_flips['consumables'])})",
+        f"🌙 Overnight ({len(advanced_flips['overnight'])})"
+    ])
+
+    # === BARROWS TAB ===
+    with adv_tab1:
+        st.subheader("⚔️ Barrows Equipment")
+        st.caption("Ahrim's, Dharok's, Guthan's, Karil's, Torag's, Verac's sets and pieces")
+
+        if advanced_flips['barrows']:
+            barrows_data = []
+            for item in advanced_flips['barrows'][:20]:
+                barrows_data.append({
+                    'Item': item['name'],
+                    'Buy': f"{item['buy']:,}",
+                    'Sell': f"{item['sell']:,}",
+                    'Margin %': item['margin_pct'],
+                    'Vol/hr': item['volume'],
+                    'GP/Flip': item['gp_per_flip'],
+                    'GP/Limit': item['gp_per_limit'],
+                    'Limit': item['limit'],
+                    'Age': format_age_short(item['age'])
+                })
+            df = pd.DataFrame(barrows_data)
+            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Flip', 'GP/Limit'])
+            st.dataframe(styled_df, use_container_width=True)
+        else:
+            st.info("No Barrows items with positive margins found")
+
+    # === MOONS TAB ===
+    with adv_tab2:
+        st.subheader("🌙 Moons of Peril")
+        st.caption("Blood Moon, Blue Moon, Eclipse Moon, Dual Macuahuitl, Sulphur Blades, Atlatl")
+
+        if advanced_flips['moons']:
+            moons_data = []
+            for item in advanced_flips['moons'][:20]:
+                moons_data.append({
+                    'Item': item['name'],
+                    'Buy': f"{item['buy']:,}",
+                    'Sell': f"{item['sell']:,}",
+                    'Margin %': item['margin_pct'],
+                    'Vol/hr': item['volume'],
+                    'GP/Flip': item['gp_per_flip'],
+                    'GP/Limit': item['gp_per_limit'],
+                    'Limit': item['limit'],
+                    'Age': format_age_short(item['age'])
+                })
+            df = pd.DataFrame(moons_data)
+            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Flip', 'GP/Limit'])
+            st.dataframe(styled_df, use_container_width=True)
+        else:
+            st.info("No Moons of Peril items with positive margins found")
+
+    # === PK GEAR TAB ===
+    with adv_tab3:
+        st.subheader("🗡️ PK Gear")
+        st.caption("High-value combat equipment: AGS, Claws, Armadyl, Bandos, Ancestral, Torva, Masori, etc.")
+
+        if advanced_flips['pk_gear']:
+            pk_data = []
+            for item in advanced_flips['pk_gear'][:25]:
+                pk_data.append({
+                    'Item': item['name'],
+                    'Buy': f"{item['buy']:,}",
+                    'Sell': f"{item['sell']:,}",
+                    'Margin %': item['margin_pct'],
+                    'Vol/hr': item['volume'],
+                    'GP/Flip': item['gp_per_flip'],
+                    'GP/Limit': item['gp_per_limit'],
+                    'Limit': item['limit'],
+                    'Age': format_age_short(item['age'])
+                })
+            df = pd.DataFrame(pk_data)
+            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Flip', 'GP/Limit'])
+            st.dataframe(styled_df, use_container_width=True)
+        else:
+            st.info("No PK gear with positive margins found")
+
+    # === CONSUMABLES TAB ===
+    with adv_tab4:
+        st.subheader("🧪 PK Consumables")
+        st.caption("Brews, Restores, Food, Combat Pots - essential PK supplies")
+
+        if advanced_flips['consumables']:
+            cons_data = []
+            for item in advanced_flips['consumables'][:25]:
+                cons_data.append({
+                    'Item': item['name'],
+                    'Buy': f"{item['buy']:,}",
+                    'Sell': f"{item['sell']:,}",
+                    'Margin %': item['margin_pct'],
+                    'Vol/hr': item['volume'],
+                    'GP/Flip': item['gp_per_flip'],
+                    'GP/Limit': item['gp_per_limit'],
+                    'Limit': item['limit'],
+                    'Age': format_age_short(item['age'])
+                })
+            df = pd.DataFrame(cons_data)
+            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Flip', 'GP/Limit'])
+            st.dataframe(styled_df, use_container_width=True)
+        else:
+            st.info("No consumables with positive margins found")
+
+    # === OVERNIGHT PLAYS TAB ===
+    with adv_tab5:
+        st.subheader("🌙 Overnight Plays (Pacific Time)")
+        st.caption("Low-volume, high-margin items. Place offers before bed (~10pm PT), check in the morning (~8am PT).")
+        st.info("💡 **Strategy**: These items trade slowly but have big margins. Leave buy offers overnight for potential fills!")
+
+        if advanced_flips['overnight']:
+            overnight_data = []
+            for item in advanced_flips['overnight'][:30]:
+                overnight_data.append({
+                    'Item': item['name'],
+                    'Buy At': f"{item['buy']:,}",
+                    'Sell At': f"{item['sell']:,}",
+                    'Margin %': item['margin_pct'],
+                    'Vol/hr': item['volume'],
+                    'GP/Limit': item['gp_per_limit'],
+                    'Limit': item['limit'],
+                    'Fill %': f"~{item.get('overnight_chance', '?')}%",
+                    'Last Trade': format_age_short(item['age'])
+                })
+            df = pd.DataFrame(overnight_data)
+            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Limit'])
+            st.dataframe(styled_df, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("### 🎯 Top 5 Overnight Recommendations")
+            top5 = advanced_flips['overnight'][:5]
+            for i, item in enumerate(top5, 1):
+                expected_profit = item['gp_per_limit'] * item.get('overnight_chance', 50) / 100
+                st.markdown(f"""
+**{i}. {item['name']}**
+- 📥 Buy at: **{item['buy']:,}** gp
+- 📤 Sell at: **{item['sell']:,}** gp
+- 💰 Profit if fills: **{fmt_gp(item['gp_per_limit'])}** (limit: {item['limit']})
+- 📊 Volume: {item['volume']}/hr | Last trade: {format_age_short(item['age'])} ago
+""")
+        else:
+            st.info("No overnight opportunities found with current filters")
+
+    # === ITEM ANALYZER (analyze any item) ===
+    st.markdown("---")
+    st.subheader("🔬 Item Price Analyzer")
+    st.caption("Get buy/sell recommendations for any item based on 48hr price history")
+
+    analyze_col1, analyze_col2 = st.columns([3, 1])
+    with analyze_col1:
+        analyze_item_name = st.text_input("Search item to analyze", placeholder="e.g., Revenant ether, Dragon claws", key="analyze_input")
+    with analyze_col2:
+        analyze_btn = st.button("📊 Analyze", key="analyze_btn")
+
+    if analyze_item_name or analyze_btn:
+        search_lower = analyze_item_name.lower().strip()
+        found_id = item_names.get(search_lower)
+
+        if not found_id:
+            # Try partial match
+            matches = [(name, iid) for name, iid in item_names.items() if search_lower in name][:5]
+            if matches:
+                st.warning(f"Exact match not found. Did you mean: {', '.join([m[0].title() for m in matches])}?")
+                # Use first match
+                found_id = matches[0][1] if len(matches) == 1 else None
+                if found_id:
+                    search_lower = matches[0][0]
+
+        if found_id:
+            with st.spinner(f"Analyzing {search_lower.title()}..."):
+                analysis = get_item_price_analysis(found_id, search_lower.title())
+
+            if analysis:
+                st.success(f"### 📊 {analysis['name']} Analysis")
+
+                # Current prices from latest API
+                current = prices.get(str(found_id), {})
+                curr_high = current.get('high', 0)
+                curr_low = current.get('low', 0)
+
+                col1, col2, col3 = st.columns(3)
+                col1.metric("Current Buy", f"{min(curr_high, curr_low):,}" if curr_high and curr_low else "N/A")
+                col2.metric("Current Sell", f"{max(curr_high, curr_low):,}" if curr_high and curr_low else "N/A")
+                margin_now = max(curr_high, curr_low) - min(curr_high, curr_low) - int(max(curr_high, curr_low) * 0.01) if curr_high and curr_low else 0
+                col3.metric("Current Margin", f"{margin_now:,}" if margin_now else "N/A")
+
+                st.markdown("---")
+
+                st.markdown("#### 📈 48-Hour Price Range")
+                range_col1, range_col2 = st.columns(2)
+                with range_col1:
+                    st.markdown("**Buy Side (Low Prices)**")
+                    st.write(f"- Min: {analysis['buy_min_48h']:,}")
+                    st.write(f"- Max: {analysis['buy_max_48h']:,}")
+                    st.write(f"- 48hr Avg: {analysis['buy_avg_48h']:,}")
+                    st.write(f"- 6hr Avg: {analysis['buy_avg_6h']:,}")
+                with range_col2:
+                    st.markdown("**Sell Side (High Prices)**")
+                    st.write(f"- Min: {analysis['sell_min_48h']:,}")
+                    st.write(f"- Max: {analysis['sell_max_48h']:,}")
+                    st.write(f"- 48hr Avg: {analysis['sell_avg_48h']:,}")
+                    st.write(f"- 6hr Avg: {analysis['sell_avg_6h']:,}")
+
+                st.markdown("---")
+                st.markdown("#### 🎯 Recommendations")
+
+                rec_col1, rec_col2 = st.columns(2)
+                with rec_col1:
+                    st.markdown("**Buy At:**")
+                    st.markdown(f"- 🛡️ Conservative: **{analysis['buy_conservative']:,}** (lowest 6hr)")
+                    st.markdown(f"- ⚖️ Balanced: **{analysis['buy_balanced']:,}** (6hr avg)")
+                    st.markdown(f"- 🔥 Aggressive: **{analysis['buy_aggressive']:,}** (fills faster)")
+                with rec_col2:
+                    st.markdown("**Sell At:**")
+                    st.markdown(f"- ⚡ Quick: **{analysis['sell_quick']:,}** (fast fill)")
+                    st.markdown(f"- ⚖️ Balanced: **{analysis['sell_balanced']:,}** (6hr avg)")
+                    st.markdown(f"- 💎 Patient: **{analysis['sell_patient']:,}** (max profit)")
+
+                # Profit table
+                st.markdown("---")
+                st.markdown("#### 💰 Profit Matrix")
+                item_limit = items.get(found_id, {}).get('limit', 1)
+                st.caption(f"GE Limit: {item_limit}")
+
+                profit_data = []
+                for buy_strat, buy_price in [("Conservative", analysis['buy_conservative']),
+                                              ("Balanced", analysis['buy_balanced']),
+                                              ("Aggressive", analysis['buy_aggressive'])]:
+                    for sell_strat, sell_price in [("Quick", analysis['sell_quick']),
+                                                    ("Balanced", analysis['sell_balanced']),
+                                                    ("Patient", analysis['sell_patient'])]:
+                        margin = sell_price - buy_price - int(sell_price * 0.01)
+                        if margin > 0:
+                            profit_data.append({
+                                'Buy Strategy': buy_strat,
+                                'Sell Strategy': sell_strat,
+                                'Buy': f"{buy_price:,}",
+                                'Sell': f"{sell_price:,}",
+                                'Margin': f"{margin:,}",
+                                'Profit/Limit': f"{fmt_gp(margin * item_limit)}"
+                            })
+
+                if profit_data:
+                    df = pd.DataFrame(profit_data)
+                    st.dataframe(df, use_container_width=True, hide_index=True)
+            else:
+                st.error("Could not fetch price history for this item. It may not have enough trade data.")
+        elif analyze_item_name:
+            st.error("Item not found. Try a different search term.")
+
+    st.markdown("---")
 
 # === AUTO-REFRESH ===
 if auto_refresh and refresh_interval > 0:

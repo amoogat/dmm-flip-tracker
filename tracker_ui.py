@@ -1377,7 +1377,7 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
             filter_stats['low_margin'] += 1
             filter_reasons.append(f"📉 Low margin ({margin_pct:.1f}%)")
 
-        max_qty = min(capital // high, item['limit']) if high > 0 and high <= capital else 0
+        max_qty = min(capital // high, item['limit']) if high and high > 0 and high <= capital else 0
 
         if max_qty < 1 and high and high <= capital and not filter_reasons:
             filter_stats['cant_buy_any'] += 1

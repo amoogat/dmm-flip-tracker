@@ -3556,8 +3556,8 @@ else:
             for item in advanced_flips['barrows'][:20]:
                 barrows_data.append({
                     'Item': item['name'],
-                    'Buy': f"{item['buy']:,}",
-                    'Sell': f"{item['sell']:,}",
+                    'Buy': item['buy'],
+                    'Sell': item['sell'],
                     'Margin %': item['margin_pct'],
                     'Vol/hr': item['volume'],
                     'GP/Flip': item['gp_per_flip'],
@@ -3566,8 +3566,7 @@ else:
                     'Age': format_age_short(item['age'])
                 })
             df = pd.DataFrame(barrows_data)
-            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Flip', 'GP/Limit'])
-            st.dataframe(styled_df, use_container_width=True)
+            st.dataframe(df, use_container_width=True)
         else:
             st.info("No Barrows items with positive margins found")
 
@@ -3581,8 +3580,8 @@ else:
             for item in advanced_flips['moons'][:20]:
                 moons_data.append({
                     'Item': item['name'],
-                    'Buy': f"{item['buy']:,}",
-                    'Sell': f"{item['sell']:,}",
+                    'Buy': item['buy'],
+                    'Sell': item['sell'],
                     'Margin %': item['margin_pct'],
                     'Vol/hr': item['volume'],
                     'GP/Flip': item['gp_per_flip'],
@@ -3591,8 +3590,7 @@ else:
                     'Age': format_age_short(item['age'])
                 })
             df = pd.DataFrame(moons_data)
-            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Flip', 'GP/Limit'])
-            st.dataframe(styled_df, use_container_width=True)
+            st.dataframe(df, use_container_width=True)
         else:
             st.info("No Moons of Peril items with positive margins found")
 
@@ -3606,8 +3604,8 @@ else:
             for item in advanced_flips['pk_gear'][:25]:
                 pk_data.append({
                     'Item': item['name'],
-                    'Buy': f"{item['buy']:,}",
-                    'Sell': f"{item['sell']:,}",
+                    'Buy': item['buy'],
+                    'Sell': item['sell'],
                     'Margin %': item['margin_pct'],
                     'Vol/hr': item['volume'],
                     'GP/Flip': item['gp_per_flip'],
@@ -3616,8 +3614,7 @@ else:
                     'Age': format_age_short(item['age'])
                 })
             df = pd.DataFrame(pk_data)
-            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Flip', 'GP/Limit'])
-            st.dataframe(styled_df, use_container_width=True)
+            st.dataframe(df, use_container_width=True)
         else:
             st.info("No PK gear with positive margins found")
 
@@ -3631,8 +3628,8 @@ else:
             for item in advanced_flips['consumables'][:25]:
                 cons_data.append({
                     'Item': item['name'],
-                    'Buy': f"{item['buy']:,}",
-                    'Sell': f"{item['sell']:,}",
+                    'Buy': item['buy'],
+                    'Sell': item['sell'],
                     'Margin %': item['margin_pct'],
                     'Vol/hr': item['volume'],
                     'GP/Flip': item['gp_per_flip'],
@@ -3641,8 +3638,7 @@ else:
                     'Age': format_age_short(item['age'])
                 })
             df = pd.DataFrame(cons_data)
-            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Flip', 'GP/Limit'])
-            st.dataframe(styled_df, use_container_width=True)
+            st.dataframe(df, use_container_width=True)
         else:
             st.info("No consumables with positive margins found")
 
@@ -3657,8 +3653,8 @@ else:
             for item in advanced_flips['overnight'][:30]:
                 overnight_data.append({
                     'Item': item['name'],
-                    'Buy At': f"{item['buy']:,}",
-                    'Sell At': f"{item['sell']:,}",
+                    'Buy At': item['buy'],
+                    'Sell At': item['sell'],
                     'Margin %': item['margin_pct'],
                     'Vol/hr': item['volume'],
                     'GP/Limit': item['gp_per_limit'],
@@ -3667,8 +3663,7 @@ else:
                     'Last Trade': format_age_short(item['age'])
                 })
             df = pd.DataFrame(overnight_data)
-            styled_df = style_dataframe(df, color_cols=['Margin %', 'GP/Limit'])
-            st.dataframe(styled_df, use_container_width=True)
+            st.dataframe(df, use_container_width=True)
 
             st.markdown("---")
             st.markdown("### 🎯 Top 5 Overnight Recommendations")

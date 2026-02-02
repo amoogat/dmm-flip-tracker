@@ -1601,15 +1601,27 @@ if 'auto_refresh_on' not in st.session_state:
 if 'refresh_secs' not in st.session_state:
     st.session_state['refresh_secs'] = 60
 
-# Widgets without key - use value from session_state, update on change
+if 'live_monitor' not in st.session_state:
+    st.session_state['live_monitor'] = False
+
+# Auto-refresh options
 auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=st.session_state['auto_refresh_on'])
 st.session_state['auto_refresh_on'] = auto_refresh
 
-interval_options = [30, 60, 120, 300]
-current_interval = st.session_state['refresh_secs']
-interval_idx = interval_options.index(current_interval) if current_interval in interval_options else 1
-refresh_interval = st.sidebar.selectbox("Refresh every", interval_options, index=interval_idx, format_func=lambda x: f"{x} seconds")
-st.session_state['refresh_secs'] = refresh_interval
+# Live Monitor Mode - fast refresh for price alerts
+live_monitor = st.sidebar.checkbox("🔴 LIVE Monitor (10s)", value=st.session_state['live_monitor'],
+                                    help="Fast refresh for watching price alerts")
+st.session_state['live_monitor'] = live_monitor
+
+if live_monitor:
+    refresh_interval = 10  # Fast refresh when monitoring
+    st.sidebar.success("⚡ Live mode: 10s refresh")
+else:
+    interval_options = [30, 60, 120, 300]
+    current_interval = st.session_state['refresh_secs']
+    interval_idx = interval_options.index(current_interval) if current_interval in interval_options else 1
+    refresh_interval = st.sidebar.selectbox("Refresh every", interval_options, index=interval_idx, format_func=lambda x: f"{x} seconds")
+    st.session_state['refresh_secs'] = refresh_interval
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ Add GE Offer")
@@ -2487,38 +2499,81 @@ else:
 
     # === SECTION: PRICE ALERTS (only show if any) ===
     if price_alerts:
-        st.subheader("🔔 Price Alerts")
+        st.subheader("🔔 Price Alerts - LIVE MONITORING")
+
+        # Check for triggered alerts first
+        triggered_alerts = []
         alert_data = []
+
         for i, alert in enumerate(price_alerts):
             item_id = alert.get('item_id')
             p = prices.get(str(item_id), {}) if item_id else {}
             curr_high = p.get('high', 0)
             curr_low = p.get('low', 0)
+            enabled = alert.get('enabled', True)
 
-            # Determine alert condition
+            # Check if alert is triggered
+            is_triggered = False
+            trigger_msg = ""
+
+            if enabled:
+                if alert.get('high_above') and curr_high and curr_high >= alert['high_above']:
+                    is_triggered = True
+                    trigger_msg = f"🚨 HIGH HIT! {curr_high:,} ≥ {alert['high_above']:,}"
+                if alert.get('high_below') and curr_high and curr_high <= alert['high_below']:
+                    is_triggered = True
+                    trigger_msg = f"🚨 HIGH HIT! {curr_high:,} ≤ {alert['high_below']:,}"
+                if alert.get('low_above') and curr_low and curr_low >= alert['low_above']:
+                    is_triggered = True
+                    trigger_msg = f"🚨 LOW HIT! {curr_low:,} ≥ {alert['low_above']:,}"
+                if alert.get('low_below') and curr_low and curr_low <= alert['low_below']:
+                    is_triggered = True
+                    trigger_msg = f"🚨 LOW HIT! {curr_low:,} ≤ {alert['low_below']:,}"
+
+            if is_triggered:
+                triggered_alerts.append(f"**{alert['item']}**: {trigger_msg}")
+
+            # Build condition display
             conditions = []
             if alert.get('high_above'):
-                conditions.append(f"High ≥ {alert['high_above']:,}")
+                met = "✅" if curr_high and curr_high >= alert['high_above'] else "⏳"
+                conditions.append(f"{met} High ≥ {alert['high_above']:,}")
             if alert.get('high_below'):
-                conditions.append(f"High ≤ {alert['high_below']:,}")
+                met = "✅" if curr_high and curr_high <= alert['high_below'] else "⏳"
+                conditions.append(f"{met} High ≤ {alert['high_below']:,}")
             if alert.get('low_above'):
-                conditions.append(f"Low ≥ {alert['low_above']:,}")
+                met = "✅" if curr_low and curr_low >= alert['low_above'] else "⏳"
+                conditions.append(f"{met} Low ≥ {alert['low_above']:,}")
             if alert.get('low_below'):
-                conditions.append(f"Low ≤ {alert['low_below']:,}")
+                met = "✅" if curr_low and curr_low <= alert['low_below'] else "⏳"
+                conditions.append(f"{met} Low ≤ {alert['low_below']:,}")
 
-            enabled = alert.get('enabled', True)
+            status = "🚨 TRIGGERED!" if is_triggered else ("✅ Watching" if enabled else "❌ OFF")
 
             alert_data.append({
                 '#': i + 1,
                 'Item': alert['item'],
-                'Condition': ', '.join(conditions),
-                'Current High': curr_high,
-                'Current Low': curr_low,
-                'Enabled': '✅ ON' if enabled else '❌ OFF'
+                'Target': ', '.join(conditions),
+                'Now High': curr_high,
+                'Now Low': curr_low,
+                'Status': status
             })
 
+        # Show triggered alerts prominently
+        if triggered_alerts:
+            st.error("### 🚨 ALERTS TRIGGERED!")
+            for ta in triggered_alerts:
+                st.warning(ta)
+            # Add sound alert via HTML (plays a beep)
+            st.markdown('''
+                <script>
+                    var audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQAHQbHc9axdAAByxuz/1lYAAE27+f/oXAAAO8D+/+5hAAAquf3/62QAAB21+//pZQAAFLL5/+dlAAAOsPj/5mUAAAmt9//lZQAABqz2/+VlAAADq/X/5GUAAAGp9P/kZQAAAKj0/+NlAAD/pvP/42UAAP+l8//jZQAA/6Tz/+NlAAD/o/L/4mUAAP6i8v/iZQAA/qHy/+JlAAD+ofH/4mU=');
+                    audio.play();
+                </script>
+            ''', unsafe_allow_html=True)
+
         df = pd.DataFrame(alert_data)
-        st.dataframe(df)
+        st.dataframe(df, use_container_width=True)
 
         # Toggle and delete buttons
         st.write("Toggle/Delete alerts:")

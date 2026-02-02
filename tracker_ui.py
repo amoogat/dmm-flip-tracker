@@ -1264,6 +1264,7 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
 
     high_ticket = []      # Items good for flipping
     filtered_items = []   # Items filtered out (with reasons)
+    no_data_items = []    # Rare items with no price data
     filter_stats = {
         'total_above_threshold': 0,
         'no_valid_prices': 0,
@@ -1273,11 +1274,35 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
         'no_volume': 0,
         'low_margin': 0,
         'cant_buy_any': 0,
+        'no_price_data': 0,
         'passed': 0
     }
 
     now = int(time.time())
 
+    # Track which items have price data
+    items_with_prices = set(int(k) for k in prices.keys())
+
+    # First, find rare items (low GE limit) that have NO price data at all
+    for item_id, item in items.items():
+        if item_id in items_with_prices:
+            continue  # Will be processed below
+
+        # Low GE limit suggests rare/expensive item
+        if item['limit'] <= 8:
+            filter_stats['no_price_data'] += 1
+            no_data_items.append({
+                'name': item['name'],
+                'limit': item['limit'],
+                'buy': None,
+                'sell': None,
+                'margin_pct': 0,
+                'volume': 0,
+                'age': 9999,
+                'reasons': ["📭 No GE trades - check in-game"]
+            })
+
+    # Now process items WITH price data
     for item_id_str, p in prices.items():
         item_id = int(item_id_str)
         if item_id not in items:
@@ -1410,7 +1435,7 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
     high_ticket.sort(key=lambda x: x['flip_score'], reverse=True)
     filtered_items.sort(key=lambda x: x['buy'], reverse=True)
 
-    return high_ticket, filtered_items, int(price_threshold), filter_stats
+    return high_ticket, filtered_items, no_data_items, int(price_threshold), filter_stats
 
 # === LOAD DATA ===
 try:
@@ -1623,7 +1648,7 @@ if opps:
     save_history(history)
 
 stable = get_stable_picks(items, history, prices, volumes, capital, filter_stale, filter_low_vol)
-high_ticket_items, filtered_high_ticket, price_threshold, ht_filter_stats = find_high_ticket_items(items, prices, volumes, capital, min_margin)
+high_ticket_items, filtered_high_ticket, no_data_rare_items, price_threshold, ht_filter_stats = find_high_ticket_items(items, prices, volumes, capital, min_margin)
 positions = load_positions()
 price_alerts = load_alerts()
 
@@ -2563,34 +2588,50 @@ else:
         st.info("No high ticket items currently flippable")
 
     # Show filtered items so nothing is hidden
-    if filtered_high_ticket:
-        with st.expander(f"👁️ View {len(filtered_high_ticket)} filtered high-ticket items (why they're excluded)"):
+    total_filtered = len(filtered_high_ticket) + len(no_data_rare_items)
+    if total_filtered > 0:
+        with st.expander(f"👁️ View {total_filtered} filtered/rare items (why they're excluded)"):
             # Show filter breakdown
-            cols = st.columns(4)
+            cols = st.columns(5)
             cols[0].metric("⏰ Stale", ht_filter_stats.get('stale_prices', 0))
             cols[1].metric("💰 Can't Afford", ht_filter_stats.get('cant_afford', 0))
             cols[2].metric("📉 No Volume", ht_filter_stats.get('no_volume', 0))
             cols[3].metric("📊 Bad Spread", ht_filter_stats.get('bad_spread', 0))
+            cols[4].metric("📭 No Data", ht_filter_stats.get('no_price_data', 0))
 
-            st.markdown("---")
+            # Show filtered items with price data
+            if filtered_high_ticket:
+                st.markdown("##### 📊 Filtered (have prices, don't meet criteria)")
+                filtered_data = []
+                for item in filtered_high_ticket[:15]:
+                    reasons_str = " | ".join(item['reasons'][:2])
+                    filtered_data.append({
+                        'Item': item['name'],
+                        'Buy': item['buy'] if item['buy'] else '—',
+                        'Sell': item['sell'] if item['sell'] else '—',
+                        'Margin %': item['margin_pct'],
+                        'Vol/hr': item['volume'],
+                        'Why': reasons_str
+                    })
+                if filtered_data:
+                    fdf = pd.DataFrame(filtered_data)
+                    st.dataframe(fdf, use_container_width=True)
 
-            # Show the actual filtered items
-            filtered_data = []
-            for item in filtered_high_ticket[:20]:  # Limit to top 20 by price
-                reasons_str = " | ".join(item['reasons'][:2])  # Show first 2 reasons
-                filtered_data.append({
-                    'Item': item['name'],
-                    'Buy': item['buy'],
-                    'Sell': item['sell'],
-                    'Margin %': item['margin_pct'],
-                    'Vol/hr': item['volume'],
-                    'Why Filtered': reasons_str
-                })
-
-            if filtered_data:
-                fdf = pd.DataFrame(filtered_data)
-                st.dataframe(fdf, use_container_width=True)
-                st.caption("These items are in the top 25% by price but don't meet flip criteria right now. Check back later!")
+            # Show rare items with NO price data (like Statius warhammer)
+            if no_data_rare_items:
+                st.markdown("##### 📭 Rare Items (no GE data - check in-game)")
+                st.caption(f"These {len(no_data_rare_items)} items have low GE limits (rare/expensive) but no recent trades on the GE API")
+                rare_data = []
+                for item in no_data_rare_items[:20]:
+                    rare_data.append({
+                        'Item': item['name'],
+                        'GE Limit': item['limit'],
+                        'Status': '📭 No trades'
+                    })
+                if rare_data:
+                    rdf = pd.DataFrame(rare_data)
+                    st.dataframe(rdf, use_container_width=True)
+                st.caption("💡 These items may still be tradeable - check World 2 GE or trade in person!")
 
     st.markdown("---")
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")

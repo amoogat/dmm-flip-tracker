@@ -2549,29 +2549,36 @@ else:
             stab = int(analysis['stability_score']) if analysis else 0
             trend = analysis['price_trend'] if analysis else '—'
 
-            # Calculate Potential: profit * min(vol/hr, limit) = GP potential per limit cycle
+            # Calculate GP/hr and GP/day potential
             effective_vol = min(opp['volume'], opp['limit'])
-            potential = round(opp['profit'] * effective_vol, 0)
+            gp_per_hr = opp['profit'] * effective_vol
+            gp_per_day = gp_per_hr * 24
+
+            # Format GP/day nicely
+            if gp_per_day >= 1_000_000:
+                gp_day_str = f"{gp_per_day/1_000_000:.1f}M"
+            elif gp_per_day >= 1000:
+                gp_day_str = f"{gp_per_day/1000:.0f}K"
+            else:
+                gp_day_str = str(int(gp_per_day))
 
             opp_data.append({
                 'Item': opp['name'],
+                '💰/Flip': opp['profit'],
+                '💰/Day': gp_day_str,
                 'Buy': opp['buy'],
                 'Sell': opp['sell'],
                 'Margin %': round(opp['margin_pct'], 1),
                 'Vol/hr': opp['volume'],
                 'Fresh': f"{freshness} {format_age(age)}",
-                '💎Potential': int(potential),
                 'Stab': stab,
                 'Trend': trend,
-                '🔥Agg': opp['smart_agg'],
-                '⚖️Bal': opp['smart_bal'],
-                '🛡️Con': opp['smart_con'],
-                'Profit': opp['profit']
+                '🔥Agg': opp['smart_agg']
             })
         df = pd.DataFrame(opp_data)
-        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', '💎Potential', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        styled_df = style_dataframe(df, color_cols=['💰/Flip', 'Vol/hr', 'Stab', '🔥Agg'])
         st.dataframe(styled_df)
-        st.caption("💎Potential = Profit × min(Vol,Limit) | Stab=Stability | 🔥Agg | ⚖️Bal | 🛡️Con")
+        st.caption("💰/Flip = profit per flip | 💰/Day = daily GP if flipping continuously | Stab=Stability")
     else:
         st.info("No opportunities with current filters")
 
@@ -2595,31 +2602,38 @@ else:
             else:
                 freshness = "🔴"
 
-            # Calculate Potential: profit * min(vol/hr, limit) = GP potential per limit cycle
+            # Calculate GP/hr and GP/day potential
             item_limit = items.get(s.get('item_id'), {}).get('limit', 1)
             effective_vol = min(s.get('volume', 0), item_limit)
-            potential = round(s['profit'] * effective_vol, 0)
+            gp_per_hr = s['profit'] * effective_vol
+            gp_per_day = gp_per_hr * 24
+
+            # Format GP/day nicely
+            if gp_per_day >= 1_000_000:
+                gp_day_str = f"{gp_per_day/1_000_000:.1f}M"
+            elif gp_per_day >= 1000:
+                gp_day_str = f"{gp_per_day/1000:.0f}K"
+            else:
+                gp_day_str = str(int(gp_per_day))
 
             stable_data.append({
                 'Item': s['name'],
+                '💰/Flip': s['profit'],
+                '💰/Day': gp_day_str,
                 'Buy': s['buy'],
                 'Sell': s['sell'],
                 'Margin %': round(s['margin_pct'], 1),
                 'Vol/hr': s.get('volume', 0),
                 'Fresh': f"{freshness} {format_age(age)}",
-                '💎Potential': int(potential),
                 'Stab': s.get('score', 0),
                 'Price': s.get('price_trend', '—'),
                 'Margin': s.get('margin_trend', '—'),
-                '🔥Agg': s.get('smart_agg', 0),
-                '⚖️Bal': s.get('smart_bal', 0),
-                '🛡️Con': s.get('smart_con', 0),
-                'Profit': s['profit']
+                '🔥Agg': s.get('smart_agg', 0)
             })
         df = pd.DataFrame(stable_data)
-        styled_df = style_dataframe(df, color_cols=['Profit', 'Vol/hr', '💎Potential', 'Stab', '🔥Agg', '⚖️Bal', '🛡️Con'])
+        styled_df = style_dataframe(df, color_cols=['💰/Flip', 'Vol/hr', 'Stab', '🔥Agg'])
         st.dataframe(styled_df)
-        st.caption("💎Potential = Profit × min(Vol,Limit) | Stab=Stability | Price/Margin=Trends")
+        st.caption("💰/Flip = profit per flip | 💰/Day = daily GP potential | Price/Margin = trend direction")
     else:
         st.info(f"Building data... tracking {len(history)} items. Keep page open!")
 

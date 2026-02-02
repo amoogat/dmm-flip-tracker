@@ -1354,20 +1354,42 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
         vol = volumes.get(item_id_str, {})
         api_vol = (vol.get('highPriceVolume', 0) or 0) + (vol.get('lowPriceVolume', 0) or 0)
 
-        # SMART VOLUME: If API says 0 but timestamp is recent, it DID trade
-        # The volume API might not have the item, but price timestamps prove trades happened
-        if api_vol == 0 and age < 3600:
-            # Traded in last hour but volume API doesn't have it - infer at least 1
-            inferred_vol = 1
-            vol_display = "1+"  # Show it traded but exact count unknown
-        elif api_vol == 0:
-            inferred_vol = 0
-            vol_display = "0"
+        # SMART VOLUME for high ticket items
+        # These trade infrequently, so estimate daily volume from timestamp
+        if api_vol > 0:
+            # Have actual hourly data
+            hourly_vol = api_vol
+            daily_vol = api_vol * 24
+            if api_vol >= 10:
+                vol_display = f"{api_vol}/hr"
+            else:
+                vol_display = f"~{daily_vol}/day"
+        elif age < 3600:
+            # Traded in last hour, estimate ~24/day
+            hourly_vol = 1
+            daily_vol = 24
+            vol_display = "~24/day"
+        elif age < 14400:  # 4 hours
+            # Traded in last 4 hours, estimate ~6/day
+            hourly_vol = 0.25
+            daily_vol = 6
+            vol_display = "~6/day"
+        elif age < 43200:  # 12 hours
+            # Traded in last 12 hours, estimate ~2/day
+            hourly_vol = 0.08
+            daily_vol = 2
+            vol_display = "~2/day"
+        elif age < 86400:  # 24 hours
+            # Traded in last 24 hours, estimate ~1/day
+            hourly_vol = 0.04
+            daily_vol = 1
+            vol_display = "~1/day"
         else:
-            inferred_vol = api_vol
-            vol_display = str(api_vol)
+            hourly_vol = 0
+            daily_vol = 0
+            vol_display = "rare"
 
-        total_vol = inferred_vol  # Use for calculations
+        total_vol = hourly_vol  # For GP/hr calculations
 
         margin = high - low - int(high * 0.01) if high and low else 0
         margin_pct = (margin / low * 100) if low and low > 0 else 0
@@ -1400,13 +1422,14 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
 
         # === CORE FLIP METRICS ===
         profit_per_cycle = margin * max_qty
-        capital_locked = high * max_qty
+        capital_locked = high * max_qty if high else 0
         roi_pct = (profit_per_cycle / capital_locked) * 100 if capital_locked > 0 else 0
-        effective_vol = min(total_vol, item['limit'])
-        gp_per_hour = profit_per_cycle * (effective_vol / max(max_qty, 1))
 
-        # === RISK ASSESSMENT ===
-        risk_factors = []
+        # HIGH TICKET: Use DAILY potential, not hourly (these trade slowly!)
+        effective_daily_vol = min(daily_vol, item['limit'])
+        gp_per_day = profit_per_cycle * effective_daily_vol
+        gp_per_hour = gp_per_day / 24 if gp_per_day else 0
+
         # === RISK ASSESSMENT (relaxed for high ticket) ===
         risk_factors = []
         if total_vol == 0:
@@ -1472,13 +1495,15 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
             'sell': low,
             'margin': margin,
             'margin_pct': margin_pct,
-            'volume': total_vol,
-            'vol_display': vol_display,  # "1+" if inferred, actual number otherwise
+            'volume': hourly_vol,
+            'daily_vol': daily_vol,
+            'vol_display': vol_display,
             'profit': profit_per_cycle,
+            'gp_per_day': int(gp_per_day),
             'qty': max_qty,
             'age': age,
             'limit': item['limit'],
-            'gp_per_hour': int(gp_per_hour) if total_vol > 0 else 0,
+            'gp_per_hour': int(gp_per_hour),
             'roi_pct': round(roi_pct, 1),
             'capital_locked': capital_locked,
             'flip_score': flip_score,
@@ -2704,23 +2729,32 @@ else:
             else:
                 freshness = "🔴"
 
+            # Format GP/day nicely
+            gp_day = item['gp_per_day']
+            if gp_day >= 1_000_000:
+                gp_day_str = f"{gp_day/1_000_000:.1f}M"
+            elif gp_day >= 1000:
+                gp_day_str = f"{gp_day/1000:.0f}K"
+            else:
+                gp_day_str = str(gp_day)
+
             high_ticket_data.append({
                 'Item': item['name'],
                 '💎Score': item['flip_score'],
-                'Profit': item['profit'],  # Raw profit per flip (key for high ticket!)
+                '💰/Flip': item['profit'],  # Profit per flip
+                '💰/Day': gp_day_str,  # Daily potential based on volume
                 'ROI %': item['roi_pct'],
                 'Buy': item['buy'],
                 'Sell': item['sell'],
                 'Margin %': round(item['margin_pct'], 1),
-                'Vol': item['vol_display'],  # "1+" if inferred from timestamp
-                'Last Trade': f"{freshness} {item['last_traded']}",
-                'Risk': item['risk'],
-                'Locked': item['capital_locked']
+                'Vol': item['vol_display'],
+                'Traded': f"{freshness} {item['last_traded']}",
+                'Risk': item['risk']
             })
         df = pd.DataFrame(high_ticket_data)
-        styled_df = style_dataframe(df, color_cols=['💎Score', 'Profit', 'ROI %'])
+        styled_df = style_dataframe(df, color_cols=['💎Score', '💰/Flip', 'ROI %'])
         st.dataframe(styled_df)
-        st.caption("💎Score = Profit × ROI × Freshness | Vol = trades/hr (1+ = traded recently but count unknown)")
+        st.caption("💰/Flip = profit per flip | 💰/Day = daily GP potential | Vol = estimated trades (~6/day = about 6 trades per day)")
     else:
         st.info("No high ticket items currently flippable")
 

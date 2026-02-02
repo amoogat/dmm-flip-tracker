@@ -1342,7 +1342,7 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
             filter_stats['stale_prices'] += 1
             filter_reasons.append(f"⏰ Very stale ({age//3600}h old)")
 
-        spread_ratio = high / low if low and low > 0 else 999
+        spread_ratio = high / low if high and low and low > 0 else 999
         if spread_ratio > 2.5:  # Relaxed for high ticket (wider spreads = more profit)
             filter_stats['bad_spread'] += 1
             filter_reasons.append(f"📊 Wide spread ({spread_ratio:.1f}x)")

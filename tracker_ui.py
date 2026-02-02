@@ -3331,62 +3331,24 @@ else:
     st.markdown("---")
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")
 
-# === AUTO-REFRESH (Smooth rerun via hidden button click) ===
+# === AUTO-REFRESH ===
 if auto_refresh or live_monitor:
-    # Create a hidden refresh button that JavaScript will auto-click
-    # This triggers Streamlit's smooth rerun instead of harsh page reload
-
-    # Hidden button for auto-refresh trigger
-    refresh_placeholder = st.empty()
-    with refresh_placeholder.container():
-        # This button is hidden via CSS but clickable by JS
-        st.markdown(f'''
-        <style>
-            #auto-refresh-btn {{
-                position: fixed;
-                bottom: -100px;
-                opacity: 0;
-                pointer-events: none;
-            }}
-        </style>
-        ''', unsafe_allow_html=True)
-
-        # The actual trigger - clicking this causes smooth Streamlit rerun
-        if st.button("🔄", key="auto_refresh_trigger", help="Auto-refresh trigger"):
-            st.cache_data.clear() if hasattr(st, 'cache_data') else None
-            rerun()
-
-    # JavaScript to auto-click the button after interval
-    st.markdown(f'''
-    <script>
-        (function() {{
-            // Clear any existing timer
-            if (window.stAutoRefreshTimer) {{
-                clearTimeout(window.stAutoRefreshTimer);
-            }}
-
-            // Set up new timer
-            window.stAutoRefreshTimer = setTimeout(function() {{
-                // Find the refresh button and click it
-                var buttons = window.parent.document.querySelectorAll('button');
-                for (var i = 0; i < buttons.length; i++) {{
-                    if (buttons[i].innerText.includes('🔄') ||
-                        buttons[i].getAttribute('key') === 'auto_refresh_trigger') {{
-                        buttons[i].click();
-                        return;
-                    }}
-                }}
-                // Fallback: find any button with the refresh key
-                var allButtons = window.parent.document.querySelectorAll('[data-testid="baseButton-secondary"]');
-                if (allButtons.length > 0) {{
-                    allButtons[allButtons.length - 1].click();
-                }}
-            }}, {refresh_interval * 1000});
-        }})();
-    </script>
-    ''', unsafe_allow_html=True)
-
-    if live_monitor:
-        st.caption(f"🔴 LIVE MONITOR: Smooth refresh every {refresh_interval}s | Settings persist!")
-    else:
-        st.caption(f"🔄 Smooth refresh every {refresh_interval}s | Settings persist!")
+    # Try streamlit-autorefresh for smooth updates (no page flash)
+    # Falls back to meta refresh if not installed
+    smooth_refresh = False
+    try:
+        from streamlit_autorefresh import st_autorefresh
+        count = st_autorefresh(interval=refresh_interval * 1000, limit=None, key="auto_refresher")
+        smooth_refresh = True
+        if live_monitor:
+            st.caption(f"🔴 LIVE MONITOR: Smooth refresh #{count} every {refresh_interval}s")
+        else:
+            st.caption(f"🔄 Smooth refresh #{count} every {refresh_interval}s")
+    except ImportError:
+        # Fallback: meta refresh (works but page flashes)
+        st.markdown(f'<meta http-equiv="refresh" content="{refresh_interval}">', unsafe_allow_html=True)
+        if live_monitor:
+            st.caption(f"🔴 LIVE MONITOR: Refreshing every {refresh_interval}s")
+        else:
+            st.caption(f"🔄 Refreshing every {refresh_interval}s")
+        st.info("💡 **Want smoother refreshes?** Run: `pip install streamlit-autorefresh`")

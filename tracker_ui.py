@@ -1924,6 +1924,15 @@ def get_advanced_flips(items, prices, volumes, capital):
         if buy > capital:
             continue
 
+        # FILTER OUT BRACKET SCAMS: Extreme spreads are fake offers
+        spread_ratio = sell / buy if buy > 0 else 999
+        if spread_ratio > 5.0:  # Skip ridiculous spreads (5x+)
+            continue
+        if margin_pct > 200:  # Skip insane margins (200%+)
+            continue
+        if buy < 10:  # Skip 1gp bracket scam buys
+            continue
+
         limit = item.get('limit', 1)
         gp_per_limit = margin * limit
         max_qty = min(capital // buy, limit) if buy > 0 else 0
@@ -1941,7 +1950,8 @@ def get_advanced_flips(items, prices, volumes, capital):
             'qty': max_qty,
             'gp_per_flip': gp_per_flip,
             'gp_per_limit': gp_per_limit,
-            'age': age
+            'age': age,
+            'spread_ratio': round(spread_ratio, 2)
         }
 
         # Categorize by keywords
@@ -1962,7 +1972,17 @@ def get_advanced_flips(items, prices, volumes, capital):
         # OVERNIGHT PLAYS: Low volume (<10) but decent margin potential
         # Items that might fill if you leave an offer overnight
         # Pacific timezone - overnight = ~10pm-8am = 10 hours
-        if vol <= 10 and margin_pct >= 5 and gp_per_limit >= 50000 and age < 86400:
+        # Extra strict filters for overnight to ensure quality
+        is_good_overnight = (
+            vol <= 10 and
+            margin_pct >= 5 and
+            margin_pct <= 80 and         # Cap at 80% - be stricter for overnight
+            spread_ratio <= 2.5 and      # Max 2.5x spread ratio
+            buy >= 500 and               # Min buy price 500gp (filters junk)
+            gp_per_limit >= 50000 and
+            age < 86400
+        )
+        if is_good_overnight:
             # Estimate if offer might fill overnight (very rough)
             # If 1 trade/day avg and we leave offer for 10hrs, ~40% chance
             overnight_chance = min(90, max(10, (vol + 1) * 10))  # rough estimate

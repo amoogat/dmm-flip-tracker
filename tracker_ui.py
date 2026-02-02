@@ -1487,7 +1487,7 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
         })
 
     high_ticket.sort(key=lambda x: x['flip_score'], reverse=True)
-    filtered_items.sort(key=lambda x: x['buy'], reverse=True)
+    filtered_items.sort(key=lambda x: x['buy'] or 0, reverse=True)
 
     return high_ticket, filtered_items, no_data_items, int(price_threshold), filter_stats
 

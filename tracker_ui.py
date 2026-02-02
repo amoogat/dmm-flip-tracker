@@ -1915,39 +1915,45 @@ if filter_low_vol != saved_settings['filter_low_vol']:
 st.sidebar.caption("Settings auto-save and persist across refreshes!")
 
 st.sidebar.markdown("---")
-st.sidebar.subheader("🔄 Refresh Settings")
-st.sidebar.caption("These settings PERSIST across page refreshes!")
+st.sidebar.subheader("🔄 Auto-Refresh")
 
-# === MAIN AUTO-REFRESH (for full page data) ===
-st.sidebar.markdown("**📊 Data Refresh** (full page)")
+# Simple auto-refresh toggle
 auto_refresh = st.sidebar.checkbox("Enable auto-refresh", value=saved_settings['auto_refresh_on'])
 if auto_refresh != saved_settings['auto_refresh_on']:
     save_settings(auto_refresh_on=auto_refresh)
 
-interval_options = [30, 60, 120, 300]
-current_interval = saved_settings['refresh_secs']
-interval_idx = interval_options.index(current_interval) if current_interval in interval_options else 1
-data_refresh_interval = st.sidebar.selectbox("Data refresh", interval_options, index=interval_idx, format_func=lambda x: f"{x} seconds")
-if data_refresh_interval != saved_settings['refresh_secs']:
-    save_settings(refresh_secs=data_refresh_interval)
+if auto_refresh:
+    # Interval options including fast 10s for live monitoring
+    interval_options = [10, 30, 60, 120, 300]
+    current_interval = saved_settings['refresh_secs']
+    interval_idx = interval_options.index(current_interval) if current_interval in interval_options else 2  # Default 60s
 
-st.sidebar.markdown("---")
+    refresh_interval = st.sidebar.selectbox(
+        "Refresh interval",
+        interval_options,
+        index=interval_idx,
+        format_func=lambda x: f"⚡ {x}s (LIVE)" if x == 10 else f"{x} seconds"
+    )
 
-# === LIVE ALERT MONITOR (separate from data refresh) ===
-st.sidebar.markdown("**🔔 Price Alert Monitor** (separate)")
-live_monitor = st.sidebar.checkbox("🔴 LIVE Monitor (10s)", value=saved_settings['live_monitor'],
-                                    help="Fast 10s refresh JUST for price alerts - runs separately!")
-if live_monitor != saved_settings['live_monitor']:
-    save_settings(live_monitor=live_monitor)
+    if refresh_interval != saved_settings['refresh_secs']:
+        save_settings(refresh_secs=refresh_interval)
 
-if live_monitor:
-    st.sidebar.success("⚡ LIVE MODE ON")
-    st.sidebar.caption("Checking alerts every 10 seconds!")
-    # When live monitor is ON, use 10s refresh
-    refresh_interval = 10
+    # Show mode indicator
+    if refresh_interval == 10:
+        st.sidebar.success("🔴 LIVE MODE - 10s refresh")
+    else:
+        st.sidebar.info(f"📊 Refreshing every {refresh_interval}s")
+
+    # Track live_monitor state for backwards compatibility
+    live_monitor = (refresh_interval == 10)
+    if live_monitor != saved_settings.get('live_monitor', False):
+        save_settings(live_monitor=live_monitor)
 else:
-    # When live monitor is OFF, use the user's data refresh setting
-    refresh_interval = data_refresh_interval if auto_refresh else 0
+    refresh_interval = 0
+    live_monitor = False
+    st.sidebar.caption("Auto-refresh disabled")
+
+st.sidebar.caption("✨ Smooth refresh - no page flash!")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("➕ Add GE Offer")

@@ -2594,6 +2594,78 @@ else:
     # === SECTION: HIGH TICKET ITEMS ===
     st.subheader("💰 High Ticket Flips")
 
+    # Item lookup - find any item and see why it's not showing
+    with st.expander("🔍 Look up a specific item"):
+        search_item = st.text_input("Item name", placeholder="e.g., Twinflame staff", key="ht_search")
+        if search_item:
+            search_lower = search_item.lower()
+            found_id = item_names.get(search_lower)
+
+            if found_id:
+                item_info = items.get(found_id, {})
+                price_data = prices.get(str(found_id), {})
+                vol_data = volumes.get(str(found_id), {})
+
+                st.markdown(f"### {item_info.get('name', search_item)}")
+
+                if price_data:
+                    high = price_data.get('high', 0)
+                    low = price_data.get('low', 0)
+                    high_time = price_data.get('highTime', 0)
+                    low_time = price_data.get('lowTime', 0)
+                    now = int(time.time())
+                    age = max(now - high_time, now - low_time) if high_time and low_time else 9999
+
+                    vol = (vol_data.get('highPriceVolume', 0) or 0) + (vol_data.get('lowPriceVolume', 0) or 0)
+                    margin = high - low - int(high * 0.01) if high and low else 0
+                    margin_pct = (margin / low * 100) if low else 0
+
+                    col1, col2, col3 = st.columns(3)
+                    col1.metric("Buy Price", f"{high:,}" if high else "N/A")
+                    col2.metric("Sell Price", f"{low:,}" if low else "N/A")
+                    col3.metric("Margin", f"{margin_pct:.1f}%" if margin_pct else "N/A")
+
+                    col4, col5, col6 = st.columns(3)
+                    col4.metric("Vol/hr", vol)
+                    col5.metric("GE Limit", item_info.get('limit', '?'))
+                    if age < 3600:
+                        col6.metric("Last Trade", f"{age//60}m ago")
+                    elif age < 86400:
+                        col6.metric("Last Trade", f"{age//3600}h ago")
+                    else:
+                        col6.metric("Last Trade", f"{age//86400}d ago")
+
+                    # Show WHY it's not in high ticket
+                    st.markdown("**Why not showing in High Ticket:**")
+                    reasons = []
+                    if high and high < price_threshold:
+                        reasons.append(f"❌ Price ({high:,}) below threshold ({price_threshold:,})")
+                    if age > 86400:
+                        reasons.append(f"❌ Too stale ({age//3600}h old, max 24h)")
+                    if high and high > capital:
+                        reasons.append(f"❌ Can't afford ({high:,} > {capital:,})")
+                    if margin_pct < 2:
+                        reasons.append(f"❌ Low margin ({margin_pct:.1f}%, min 2%)")
+                    spread = high / low if low else 999
+                    if spread > 2.5:
+                        reasons.append(f"❌ Wide spread ({spread:.1f}x, max 2.5x)")
+
+                    if not reasons:
+                        st.success("✅ Should be showing! Check the table below.")
+                    else:
+                        for r in reasons:
+                            st.warning(r)
+                else:
+                    st.error(f"📭 No GE price data for this item")
+                    st.info(f"GE Limit: {item_info.get('limit', '?')} - This item hasn't traded on the GE recently.")
+            else:
+                # Fuzzy match suggestions
+                matches = [name for name in item_names.keys() if search_lower in name][:5]
+                if matches:
+                    st.warning(f"Item not found. Did you mean: {', '.join(matches)}?")
+                else:
+                    st.error("Item not found in database")
+
     # Show stats about coverage
     total_ht = ht_filter_stats.get('total_above_threshold', 0)
     passed_ht = ht_filter_stats.get('passed', 0)

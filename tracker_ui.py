@@ -1532,6 +1532,165 @@ def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
 
     return high_ticket, filtered_items, no_data_items, int(price_threshold), filter_stats
 
+def find_market_movers(items, history, prices, volumes):
+    """
+    Detect items with significant price/margin movements.
+
+    Returns items that are:
+    - Pumping (price up >10%)
+    - Dumping (price down >10%)
+    - Rising/Falling (price up/down 3-10%)
+    - Margin expanding/squeezing (>3% change)
+    - Volume spikes (2x+ normal)
+    """
+    movers = []
+    now = int(time.time())
+
+    for item_id_str, item_history in history.items():
+        if len(item_history) < 3:
+            continue
+
+        item_id = int(item_id_str)
+        if item_id not in items:
+            continue
+
+        item = items[item_id]
+
+        # Use recent data only (last 30 minutes)
+        recent_h = [x for x in item_history if now - x.get('timestamp', 0) < 1800]
+        if len(recent_h) < 3:
+            recent_h = item_history[-10:] if len(item_history) >= 3 else item_history
+
+        if len(recent_h) < 3:
+            continue
+
+        # Calculate trends
+        buy_prices = [x['buy'] for x in recent_h]
+        sell_prices = [x['sell'] for x in recent_h]
+        margins = [x['margin_pct'] for x in recent_h]
+        volumes_hist = [x.get('volume', 0) for x in recent_h]
+
+        mid = len(buy_prices) // 2
+        if mid > 0:
+            first_half_price = statistics.mean(buy_prices[:mid])
+            second_half_price = statistics.mean(buy_prices[mid:])
+            price_change = ((second_half_price - first_half_price) / first_half_price * 100) if first_half_price else 0
+
+            first_half_margin = statistics.mean(margins[:mid])
+            second_half_margin = statistics.mean(margins[mid:])
+            margin_change = second_half_margin - first_half_margin
+        else:
+            price_change = 0
+            margin_change = 0
+
+        # Determine price trend
+        if price_change > 10:
+            price_trend = "🚀 PUMPING"
+            price_alert = f"UP {price_change:.0f}%"
+        elif price_change < -10:
+            price_trend = "📉 DUMPING"
+            price_alert = f"DOWN {abs(price_change):.0f}%"
+        elif price_change > 3:
+            price_trend = "📈 Rising"
+            price_alert = f"+{price_change:.0f}%"
+        elif price_change < -3:
+            price_trend = "📉 Falling"
+            price_alert = f"{price_change:.0f}%"
+        else:
+            price_trend = None
+            price_alert = None
+
+        # Determine margin trend
+        if margin_change > 3:
+            margin_trend = "💰 Expanding"
+            margin_alert = f"+{margin_change:.1f}%pts"
+        elif margin_change < -3:
+            margin_trend = "⚠️ Squeezing"
+            margin_alert = f"{margin_change:.1f}%pts"
+        else:
+            margin_trend = None
+            margin_alert = None
+
+        # Volume spike detection
+        avg_vol = statistics.mean(volumes_hist) if volumes_hist and any(v > 0 for v in volumes_hist) else 0
+        current_vol = volumes_hist[-1] if volumes_hist else 0
+        vol_ratio = current_vol / avg_vol if avg_vol > 0 else 1.0
+
+        if vol_ratio > 2:
+            vol_alert = f"📊 {vol_ratio:.1f}x vol"
+        else:
+            vol_alert = None
+
+        # Only include if there's something noteworthy
+        alerts = []
+        if price_alert:
+            alerts.append(price_alert)
+        if margin_alert:
+            alerts.append(margin_alert)
+        if vol_alert:
+            alerts.append(vol_alert)
+
+        if not alerts:
+            continue
+
+        # Get current prices
+        p = prices.get(item_id_str, {})
+        api_high = p.get('high', 0)
+        api_low = p.get('low', 0)
+
+        # Handle inverted prices
+        if api_high and api_low:
+            high = max(api_high, api_low)
+            low = min(api_high, api_low)
+        else:
+            high = recent_h[-1]['buy']
+            low = recent_h[-1]['sell']
+
+        margin = high - low - int(high * 0.01) if high and low else 0
+        margin_pct = (margin / low * 100) if low else 0
+
+        v = volumes.get(item_id_str, {})
+        vol = (v.get('highPriceVolume', 0) or 0) + (v.get('lowPriceVolume', 0) or 0)
+
+        # Calculate urgency score (how important is this mover)
+        urgency = 0
+        if "PUMPING" in str(price_trend):
+            urgency += 50
+        elif "DUMPING" in str(price_trend):
+            urgency += 50
+        elif "Rising" in str(price_trend) or "Falling" in str(price_trend):
+            urgency += 25
+        if "Expanding" in str(margin_trend):
+            urgency += 20
+        elif "Squeezing" in str(margin_trend):
+            urgency += 30  # More urgent - may want to exit
+        if vol_ratio > 3:
+            urgency += 20
+        elif vol_ratio > 2:
+            urgency += 10
+
+        movers.append({
+            'id': item_id,
+            'name': item['name'],
+            'buy': low,
+            'sell': high,
+            'margin': margin,
+            'margin_pct': margin_pct,
+            'volume': vol,
+            'price_trend': price_trend or "→",
+            'price_change': price_change,
+            'margin_trend': margin_trend or "→",
+            'margin_change': margin_change,
+            'vol_ratio': vol_ratio,
+            'alerts': alerts,
+            'urgency': urgency,
+            'samples': len(recent_h)
+        })
+
+    # Sort by urgency
+    movers.sort(key=lambda x: x['urgency'], reverse=True)
+    return movers
+
 # === LOAD DATA ===
 try:
     items, item_names = fetch_items()
@@ -1756,6 +1915,7 @@ if opps:
 
 stable = get_stable_picks(items, history, prices, volumes, capital, filter_stale, filter_low_vol)
 high_ticket_items, filtered_high_ticket, no_data_rare_items, price_threshold, ht_filter_stats = find_high_ticket_items(items, prices, volumes, capital, min_margin)
+market_movers = find_market_movers(items, history, prices, volumes)
 positions = load_positions()
 price_alerts = load_alerts()
 
@@ -2336,19 +2496,8 @@ else:
 
         breach_col1, breach_col2 = st.columns([4, 1])
         with breach_col1:
-            st.markdown(f"""
-            <div style="background: var(--bg-card); padding: 12px 20px; border-radius: 8px;
-                        margin: 10px 0; border-left: 4px solid {urgency_color};
-                        display: flex; justify-content: space-between; align-items: center;">
-                <span style="color: #A0A0A0;">
-                    ⚔️ Next Breach: <strong style="color: {urgency_color};">{breach_info['next_breach_pacific']} PT</strong>
-                    {f' ({urgency_text})' if urgency_text else ''}
-                </span>
-                <span style="font-size: 1.3rem; font-weight: bold; color: {urgency_color};">
-                    {breach_info['countdown']}
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
+            countdown_html = f"""<div style="background: #1a1a2e; padding: 12px 20px; border-radius: 8px; margin: 10px 0; border-left: 4px solid {urgency_color}; display: flex; justify-content: space-between; align-items: center;"><span style="color: #A0A0A0;">⚔️ Next Breach: <strong style="color: {urgency_color};">{breach_info['next_breach_pacific']} PT</strong>{f' ({urgency_text})' if urgency_text else ''}</span><span style="font-size: 1.3rem; font-weight: bold; color: {urgency_color};">{breach_info['countdown']}</span></div>"""
+            st.markdown(countdown_html, unsafe_allow_html=True)
         with breach_col2:
             st.write("")  # Spacer
             if st.button("🔍 Scan Items", key="breach_scan_countdown"):
@@ -2887,6 +3036,57 @@ else:
                     rdf = pd.DataFrame(rare_data)
                     st.dataframe(rdf, use_container_width=True)
                 st.caption("💡 These items may still be tradeable - check World 2 GE or trade in person!")
+
+    st.markdown("---")
+
+    # === SECTION: MARKET MOVERS ===
+    st.subheader("📊 Market Movers")
+    st.caption("Items with significant price/margin changes or volume spikes. Updates as price history builds.")
+
+    if market_movers:
+        # Filter to show only the most significant movers
+        significant_movers = [m for m in market_movers if m['urgency'] >= 20][:15]
+
+        if significant_movers:
+            # Show alert summary at top
+            pumping = [m for m in significant_movers if "PUMPING" in m['price_trend']]
+            dumping = [m for m in significant_movers if "DUMPING" in m['price_trend']]
+            expanding = [m for m in significant_movers if "Expanding" in str(m.get('margin_trend', ''))]
+            squeezing = [m for m in significant_movers if "Squeezing" in str(m.get('margin_trend', ''))]
+
+            # Quick summary metrics
+            cols = st.columns(4)
+            cols[0].metric("🚀 Pumping", len(pumping))
+            cols[1].metric("📉 Dumping", len(dumping))
+            cols[2].metric("💰 Margin Up", len(expanding))
+            cols[3].metric("⚠️ Margin Down", len(squeezing))
+
+            movers_data = []
+            for m in significant_movers:
+                # Format alerts nicely
+                alerts_str = " | ".join(m['alerts'])
+
+                movers_data.append({
+                    'Item': m['name'],
+                    'Alert': alerts_str,
+                    'Buy': m['buy'],
+                    'Sell': m['sell'],
+                    'Margin %': round(m['margin_pct'], 1),
+                    'Vol/hr': m['volume'],
+                    'Trend': m['price_trend'],
+                    'Δ Price': f"{m['price_change']:+.1f}%",
+                    'Samples': m['samples']
+                })
+
+            df = pd.DataFrame(movers_data)
+            styled_df = style_dataframe(df, color_cols=['Margin %', 'Vol/hr'])
+            st.dataframe(styled_df, use_container_width=True)
+
+            st.caption("🚀 Pumping = price up >10% | 📉 Dumping = price down >10% | 💰 Expanding = margin widening | ⚠️ Squeezing = margin narrowing")
+        else:
+            st.info("No significant market movements detected yet. Keep monitoring to build data!")
+    else:
+        st.info(f"Building market data... tracking {len(history)} items. Keep page open to detect movers!")
 
     st.markdown("---")
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")

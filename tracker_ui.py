@@ -20,6 +20,7 @@ except ImportError:
     PACIFIC_TZ = timezone(timedelta(hours=-8))
 import statistics
 import pandas as pd
+import numpy as np
 
 # === COMPATIBILITY ===
 def rerun():
@@ -1238,6 +1239,170 @@ def get_stable_picks(items, history, prices, volumes, capital, filter_stale=True
     stable.sort(key=lambda x: x['smart_agg'], reverse=True)  # Default sort by aggressive 🔥
     return stable
 
+def find_high_ticket_items(items, prices, volumes, capital, min_margin=3):
+    """
+    Find high-value items optimized for profitable flipping.
+
+    Key metrics:
+    - GP/hr: Actual hourly earning potential = profit × min(volume, limit)
+    - ROI %: Return on investment = profit / capital_locked × 100
+    - Flip Score: Combined score prioritizing money-making potential
+    - Risk: Liquidity and freshness risk indicators
+    """
+    import math
+
+    # Calculate dynamic price threshold (75th percentile of all tradeable items)
+    all_prices = []
+    for item_id_str, p in prices.items():
+        high = p.get('high')
+        if high and high > 0:
+            all_prices.append(high)
+
+    if not all_prices:
+        return [], 0
+
+    # Dynamic threshold: 75th percentile
+    price_threshold = np.percentile(all_prices, 75)
+
+    high_ticket = []
+    now = int(time.time())
+
+    for item_id_str, p in prices.items():
+        item_id = int(item_id_str)
+        if item_id not in items:
+            continue
+
+        item = items[item_id]
+        high, low = p.get('high'), p.get('low')
+        high_time, low_time = p.get('highTime'), p.get('lowTime')
+
+        if not all([high, low, high_time, low_time]) or high <= low:
+            continue
+
+        # Must be above dynamic price threshold
+        if high < price_threshold:
+            continue
+
+        age = max(now - high_time, now - low_time)
+
+        # Relaxed filters for high-ticket (they often have lower volume)
+        # But stricter on spread ratio to avoid manipulation
+        if age > 600:  # Allow up to 10 min for high ticket (less liquid)
+            continue
+        if low < 10 or high / low > 1.5:  # Stricter spread ratio (less manipulation risk)
+            continue
+        if high > capital:
+            continue
+
+        vol = volumes.get(item_id_str, {})
+        total_vol = (vol.get('highPriceVolume', 0) or 0) + (vol.get('lowPriceVolume', 0) or 0)
+
+        # Lower volume threshold for high ticket (they trade less frequently)
+        if total_vol < 3:
+            continue
+
+        margin = high - low - int(high * 0.01)  # After 1% GE tax
+        margin_pct = (margin / low) * 100
+        if margin_pct < min_margin:
+            continue
+
+        max_qty = min(capital // high, item['limit'])
+        if max_qty < 1:
+            continue
+
+        # === CORE FLIP METRICS ===
+
+        # Total profit per flip cycle
+        profit_per_cycle = margin * max_qty
+
+        # Capital locked during flip
+        capital_locked = high * max_qty
+
+        # ROI % = how efficiently your capital is used
+        roi_pct = (profit_per_cycle / capital_locked) * 100 if capital_locked > 0 else 0
+
+        # GP/hr = actual money-making potential
+        # Uses min(volume, limit) as effective trades per hour
+        effective_vol = min(total_vol, item['limit'])
+        gp_per_hour = profit_per_cycle * (effective_vol / max(max_qty, 1))
+
+        # === RISK ASSESSMENT ===
+        # Low volume = harder to sell (liquidity risk)
+        # Stale prices = might not be accurate (price risk)
+        # High spread = possible manipulation
+
+        risk_factors = []
+        if total_vol < 10:
+            risk_factors.append("📉Low Vol")
+        if age > 300:
+            risk_factors.append("⏰Stale")
+        if high / low > 1.3:
+            risk_factors.append("📊Wide Spread")
+
+        risk_level = len(risk_factors)
+        if risk_level == 0:
+            risk_indicator = "✅Safe"
+        elif risk_level == 1:
+            risk_indicator = "⚠️" + risk_factors[0].split('️')[-1]
+        else:
+            risk_indicator = "🔴High Risk"
+
+        # === FLIP SCORE (optimized for making money) ===
+        # Heavily weights GP/hr and ROI, penalizes risk
+
+        # Freshness multiplier (fresh = reliable prices)
+        if age < 60:
+            fresh_mult = 1.0
+        elif age < 180:
+            fresh_mult = 0.85
+        elif age < 300:
+            fresh_mult = 0.7
+        else:
+            fresh_mult = 0.5
+
+        # Volume confidence (more volume = more reliable)
+        vol_confidence = min(1.0, total_vol / 50)  # Caps at 50 vol/hr
+
+        # Normalize scores for flip score calculation
+        gp_score = min(100, gp_per_hour / 1000)  # 100k GP/hr = max score
+        roi_score = min(100, roi_pct * 10)  # 10% ROI = max score
+        fresh_score = fresh_mult * 100
+        vol_score = vol_confidence * 100
+
+        # Flip Score: Prioritizes GP/hr and ROI with freshness/volume as confidence
+        flip_score = int(
+            gp_score * 0.35 +      # 35% weight on GP/hr (money making)
+            roi_score * 0.25 +     # 25% weight on ROI (capital efficiency)
+            fresh_score * 0.25 +   # 25% weight on freshness (reliability)
+            vol_score * 0.15       # 15% weight on volume (liquidity)
+        )
+
+        # Risk penalty: reduce score for risky items
+        flip_score = int(flip_score * (1 - risk_level * 0.15))
+
+        high_ticket.append({
+            'id': item_id,
+            'name': item['name'],
+            'buy': high,
+            'sell': low,
+            'margin': margin,
+            'margin_pct': margin_pct,
+            'volume': total_vol,
+            'profit': profit_per_cycle,
+            'qty': max_qty,
+            'age': age,
+            'limit': item['limit'],
+            'gp_per_hour': int(gp_per_hour),
+            'roi_pct': round(roi_pct, 1),
+            'capital_locked': capital_locked,
+            'flip_score': flip_score,
+            'risk': risk_indicator
+        })
+
+    # Sort by Flip Score (best money-makers first)
+    high_ticket.sort(key=lambda x: x['flip_score'], reverse=True)
+    return high_ticket, int(price_threshold)
+
 # === LOAD DATA ===
 try:
     items, item_names = fetch_items()
@@ -1449,6 +1614,7 @@ if opps:
     save_history(history)
 
 stable = get_stable_picks(items, history, prices, volumes, capital, filter_stale, filter_low_vol)
+high_ticket_items, price_threshold = find_high_ticket_items(items, prices, volumes, capital, min_margin)
 positions = load_positions()
 price_alerts = load_alerts()
 
@@ -2343,6 +2509,65 @@ else:
         st.caption("💎Potential = Profit × min(Vol,Limit) | Stab=Stability | Price/Margin=Trends")
     else:
         st.info(f"Building data... tracking {len(history)} items. Keep page open!")
+
+    st.markdown("---")
+
+    # === SECTION: HIGH TICKET ITEMS ===
+    st.subheader("💰 High Ticket Flips")
+    if high_ticket_items:
+        st.caption(f"Premium items (>{price_threshold:,} gp) optimized for profit. Sorted by 💎Flip Score. Click headers to re-sort!")
+
+        high_ticket_data = []
+        for item in high_ticket_items:
+            # Freshness indicator
+            age = item['age']
+            if age < 60:
+                freshness = "🟢"
+            elif age < 180:
+                freshness = "🟡"
+            elif age < 600:
+                freshness = "🟠"
+            else:
+                freshness = "🔴"
+
+            # Format GP/hr nicely (k for thousands, m for millions)
+            gp_hr = item['gp_per_hour']
+            if gp_hr >= 1_000_000:
+                gp_hr_str = f"{gp_hr/1_000_000:.1f}m"
+            elif gp_hr >= 1000:
+                gp_hr_str = f"{gp_hr/1000:.0f}k"
+            else:
+                gp_hr_str = str(gp_hr)
+
+            # Format capital locked
+            cap_locked = item['capital_locked']
+            if cap_locked >= 1_000_000:
+                cap_str = f"{cap_locked/1_000_000:.1f}m"
+            elif cap_locked >= 1000:
+                cap_str = f"{cap_locked/1000:.0f}k"
+            else:
+                cap_str = str(cap_locked)
+
+            high_ticket_data.append({
+                'Item': item['name'],
+                '💎Score': item['flip_score'],
+                'GP/hr': gp_hr_str,
+                'ROI %': item['roi_pct'],
+                'Buy': item['buy'],
+                'Sell': item['sell'],
+                'Margin %': round(item['margin_pct'], 1),
+                'Vol/hr': item['volume'],
+                'Fresh': f"{freshness} {format_age(age)}",
+                'Risk': item['risk'],
+                '💵Locked': cap_str,
+                'Profit': item['profit']
+            })
+        df = pd.DataFrame(high_ticket_data)
+        styled_df = style_dataframe(df, color_cols=['💎Score', 'Profit', 'Vol/hr', 'ROI %'])
+        st.dataframe(styled_df)
+        st.caption(f"💎Score = GP/hr × ROI × Freshness × Volume (risk-adjusted) | 💵Locked = Capital tied up per flip | Threshold: {price_threshold:,} gp (75th %ile)")
+    else:
+        st.info(f"No high ticket items above {price_threshold:,} gp meeting flip criteria")
 
     st.markdown("---")
     st.caption(f"Data: {len(history)} items tracked | {sum(len(h) for h in history.values())} samples | Synced with notebook")

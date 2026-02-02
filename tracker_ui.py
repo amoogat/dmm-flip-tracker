@@ -1105,14 +1105,23 @@ def find_opportunities(items, prices, volumes, capital, min_margin=3, max_margin
             continue
 
         item = items[item_id]
-        high, low = p.get('high'), p.get('low')
+        api_high, api_low = p.get('high'), p.get('low')
         high_time, low_time = p.get('highTime'), p.get('lowTime')
 
-        if not all([high, low, high_time, low_time]) or high <= low:
+        if not all([api_high, api_low, high_time, low_time]):
             continue
 
+        # Handle inverted prices (API sometimes has high < low)
+        high = max(api_high, api_low)  # Sell price (higher)
+        low = min(api_high, api_low)   # Buy price (lower)
+
         age = max(now - high_time, now - low_time)
-        if age > 300 or low < 10 or high / low > 2.0 or high > capital:
+        if age > 300 or low < 10 or high > capital:
+            continue
+
+        # Check spread ratio with correct values
+        spread_ratio = high / low if low > 0 else 999
+        if spread_ratio > 2.0:
             continue
 
         vol = volumes.get(item_id_str, {})
@@ -1121,11 +1130,11 @@ def find_opportunities(items, prices, volumes, capital, min_margin=3, max_margin
             continue
 
         margin = high - low - int(high * 0.01)
-        margin_pct = (margin / low) * 100
+        margin_pct = (margin / low) * 100 if low > 0 else 0
         if margin_pct < min_margin or margin_pct > max_margin:
             continue
 
-        max_qty = min(capital // high, item['limit'])
+        max_qty = min(capital // high, item['limit']) if high > 0 else 0
         if max_qty < 1:
             continue
 
@@ -1171,18 +1180,25 @@ def get_stable_picks(items, history, prices, volumes, capital, filter_stale=True
 
         # Get LIVE prices from API (not history!)
         p = prices.get(item_id_str, {})
-        live_buy = p.get('high', 0)  # Instant buy price
-        live_sell = p.get('low', 0)   # Instant sell price
+        api_high = p.get('high', 0)
+        api_low = p.get('low', 0)
         high_time = p.get('highTime', 0)
         low_time = p.get('lowTime', 0)
         age = max(now - high_time, now - low_time) if high_time and low_time else 9999
 
-        # Skip if no live prices or can't afford
-        if not live_buy or not live_sell or live_buy > capital:
+        # Handle inverted prices
+        if api_high and api_low:
+            high = max(api_high, api_low)  # Sell price
+            low = min(api_high, api_low)   # Buy price
+        else:
             continue
 
-        # Calculate max qty based on LIVE price
-        max_qty = min(capital // live_buy, items[item_id]['limit'])
+        # Skip if can't afford
+        if low > capital:
+            continue
+
+        # Calculate max qty based on buy price
+        max_qty = min(capital // low, items[item_id]['limit']) if low > 0 else 0
         if max_qty < 1:
             continue
 
@@ -1198,9 +1214,9 @@ def get_stable_picks(items, history, prices, volumes, capital, filter_stale=True
         if filter_low_vol and vol < 5:
             continue
 
-        # Use LIVE prices for margin calculation
-        margin = live_buy - live_sell - int(live_buy * 0.01)
-        live_margin_pct = (margin / live_sell * 100) if live_sell > 0 else 0
+        # Use LIVE prices for margin calculation (sell - buy - tax)
+        margin = high - low - int(high * 0.01)
+        live_margin_pct = (margin / low * 100) if low > 0 else 0
 
         # Calculate smart scores for each strategy
         # Freshness multiplier
@@ -1226,9 +1242,9 @@ def get_stable_picks(items, history, prices, volumes, capital, filter_stale=True
         stable.append({
             'name': items[item_id]['name'],
             'item_id': item_id,
-            'buy': live_buy, 'sell': live_sell,  # LIVE prices!
+            'buy': low, 'sell': high,  # buy at low, sell at high
             'avg_buy': a['avg_buy'], 'avg_sell': a['avg_sell'],
-            'margin_pct': live_margin_pct, 'avg_margin': a['avg_margin'],  # LIVE margin!
+            'margin_pct': live_margin_pct, 'avg_margin': a['avg_margin'],
             'margin_trend': a['margin_trend'], 'price_trend': a['price_trend'],
             'score': a['stability_score'], 'samples': a['samples'],
             'profit': margin * max_qty, 'qty': max_qty,
